@@ -1,128 +1,93 @@
 # Codex Lane
 
-A dedicated proxy launcher for OpenAI Codex Desktop on Windows.
+为 OpenAI Codex Desktop 提供独立进程级代理通道的 Windows 轻量应用。
 
-Codex Lane 让 **Codex 桌面端的两层网络**经过自己的本地观测网关，再转发到用户已有的代理：
+Codex Lane 只接管 Codex 的网络出口，不修改 Windows 系统代理、不启用 TUN，也不影响其他应用。启动前需要一个可用的 HTTP、HTTPS 或 SOCKS5 上游代理，例如 Clash 的 mixed-port。
 
-- 应用界面层：使用 `--proxy-server` 指向 CodexLane 入口。
-- Rust 内核层：使用 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 指向 CodexLane 入口。
-- CodexLane 网关：监听随机 loopback 端口，转发到用户代理，并记录连接元数据。
+![运行总览](docs/screenshots/overview.png)
 
-它不开启系统代理，不启用 TUN，不修改 Clash 规则，也不影响其他应用。
-Codex 内核可以运行在 Windows，也可以运行在 WSL2；工具会读取 Codex 配置并自动识别，
-也可以由用户显式切换。
-
-> Codex Lane 是**进程级代理启动器 + 本地观测网关**，不是 VPN。
-> 本机必须已经有一个可用的 HTTP / HTTPS / SOCKS5 上游代理。
-
-## 核心功能
-
-- 一次启动同时覆盖应用界面层和 Rust 内核层。
-- 可配置本地代理协议、地址和端口，默认适配 Clash mixed-port。
-- Codex 内核支持 `自动 / Windows / WSL` 三种选择。
-- `自动` 跟随 `config.toml`，不会自行改动 Codex 配置。
-- 显式切换 Windows / WSL 时，只修改一个配置键，并在修改前备份。
-- WSL 启动前检查发行版、内核文件和 interop 状态，失败时给出明确原因。
-- 检测已有 Codex 实例，避免单实例机制导致新环境变量不生效。
-- 提供 `--selftest` 无界面自检：代理可达性、OpenAI 连通性、安装路径、内核形态和实例状态。
-- 启动前预检 WebView2 Runtime；缺失时可从原生提示直接安装。
-- 桌面控制台：状态卡、端口和内核切换、链路检查、实时请求日志。
-- 请求日志显示时间、来源、目标域名/端口、结果、耗时、上下行字节和代理路径。
-- 全程不写系统代理、不启用 TUN、不要求管理员权限。
-
-## 推荐架构
-
-**Go 1.26 + Wails v3.0.0 + TypeScript/Svelte 5 + HTML/CSS。**
-
-Go 负责网关、代理探测、WSL/Windows 检测、进程控制、配置和日志；前端只负责界面。
-Wails 把前端资源嵌入 exe，Windows 11 自带 WebView2；启动前会预检 Runtime，
-缺失时可用原生提示直接安装。不需要 .NET 或 Electron。
-Node 只用于构建前端，不是运行时依赖。
-
-这套分层接近 magpie 的 Go + Wails + JavaScript 路线，但 CodexLane 增加本地转发网关，
-因此请求日志不再依赖猜测。
-
-详细设计见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
-
-## 快速使用（目标形态）
+## 工作方式
 
 ```text
-CodexLane.exe                 按当前配置启动 Codex
-CodexLane.exe --native        不注入代理，按原生环境启动
-CodexLane.exe --port 7897     切换代理端口并启动
-CodexLane.exe --engine wsl    切换 Codex 内核到 WSL 并启动
-CodexLane.exe --selftest      输出无界面自检
-CodexLane.exe --selftest --json
-CodexLane.exe --version       输出版本号
-CodexLane.exe --check-webview2 [--json]  检查 WebView2 Runtime
+Codex Desktop ── UI 入口 ──┐
+                           ├── Codex Lane ── 已有代理 ── OpenAI
+Codex 内核 ─── 内核入口 ───┘
 ```
 
-## 本地配置与日志
+- 界面层通过 `--proxy-server` 指向 Lane，不依赖系统代理。
+- 内核层通过 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 指向 Lane。
+- Lane 将请求转发到用户配置的上游代理，并记录连接元数据。
+- 支持 Windows 与 WSL2 内核；默认自动识别，也可以手动指定。
 
-Codex Lane 不会在 exe 同目录创建配置文件。默认位置为：
+HTTPS 只记录域名、端口、结果、耗时和流量，不记录路径、Header、Cookie 或请求体，也不做 MITM。
+
+## 功能
+
+- **一键开关**：启动、停止和重新接入 Codex，不修改系统网络设置。
+- **双入口隔离**：界面与内核分别使用独立的回环端口，端口自动复用。
+- **多上游档案**：保存多套代理地址，支持测速、切换和故障自动切换。
+- **分流与白名单**：按域名设置直连或代理；白名单可阻止未授权程序借用 Lane。
+- **请求日志**：查看来源、目标、代理路径、状态、延迟和上下行流量，支持报告与 HAR 导出。
+- **连通检查**：检查代理、Codex、WebView2、WSL2 和 OpenAI 域名连通性。
+- **桌面体验**：单文件 exe、托盘运行、开机自启和内置更新提示。
+
+## 快速开始
+
+1. 从 [Releases](https://github.com/Alexzzz2008/codex-lane/releases) 下载最新 Windows 便携版。
+2. 解压并运行 `CodexLane.exe`，确认上游代理地址和端口。
+3. 在「总览」点击「打开 Codex」，或对已运行的 Codex 点击「重新打开 Codex」。
+4. 在「请求日志」确认请求来源、目标域名和代理链路。
+
+关闭 Codex Lane 后，Codex 会失去 Lane 入口；重新启动 Codex 即可恢复原生网络。
+
+## 命令行
 
 ```text
-%LOCALAPPDATA%\CodexLane\launcher.json   代理、内核与日志设置
-%LOCALAPPDATA%\CodexLane\logs\           请求元数据日志
+CodexLane.exe                    打开桌面控制台
+CodexLane.exe --selftest         无界面自检
+CodexLane.exe --selftest --json  输出 JSON 自检结果
+CodexLane.exe --version          输出版本号
+CodexLane.exe --check-webview2   检查 WebView2 Runtime
 ```
 
-从旧版本升级时，程序会把 exe 同目录的 `launcher.json` 校验后迁移到上述目录，
-迁移成功后删除旧文件。因此把 `CodexLane.exe` 放在桌面时，桌面不会再出现配置文件。
+## 配置与日志
+
+配置文件不会写到 exe 同目录：
+
+```text
+%LOCALAPPDATA%\CodexLane\launcher.json
+%LOCALAPPDATA%\CodexLane\logs\requests-YYYYMMDD.jsonl
+```
+
+旧版本放在 exe 同目录的 `launcher.json` 会自动迁移。日志默认保留 14 天，可在设置页修改。
+
+## 检查与故障定位
+
+- 「检查」页验证代理、Codex 安装、WSL2 和 OpenAI 域名，并给出汇总分数。
+- 「Clash 规则检查」列出需要走代理的域名，可复制规则片段到现有配置。
+- 「请求日志」中的“已走代理 / 直连 / 被拒绝”用于确认实际网络路径。
+- 自检不会启动窗口，也不会启动或重启 Codex。
 
 ## 边界
 
-不处理系统代理、TUN、Clash 节点和订阅、Codex 登录与账号、代理软件自身的安装和启动。
-不支持需要用户名密码的代理认证。首版只支持 Windows 10/11，代理监听在 Windows 侧。
-
-HTTPS 默认只记录目标域名、端口、结果、耗时和流量，不记录完整路径、请求头、Cookie 或请求体。
+不处理系统代理、TUN、代理节点与订阅，也不管理 Codex 账号登录。暂不支持需要用户名密码的代理认证。
 
 ## 构建
 
-需要 Go 1.26+、Node 20+ 和 Wails v3.0.0 CLI。
+需要 Go 1.26+、Node.js 20+ 和 Wails v3 CLI。
 
 ```powershell
-cd frontend
-npm install
-npm run build
-cd ..
-
-wails3 generate bindings -clean=true -ts -i -names -time-type=string
-
-# 生成 Windows 图标与版本信息资源，需在 build 目录执行
-cd build
-wails3 generate syso -arch amd64 -icon windows/icon.ico -manifest windows/wails.exe.manifest -info windows/info.json -out ..\wails_windows_amd64.syso
-cd ..
-
-$env:GOOS="windows"; $env:GOARCH="amd64"; $env:CGO_ENABLED="0"
-go build -tags production -trimpath -buildvcs=false -ldflags="-w -s -H windowsgui" -o bin/CodexLane.exe .
+pwsh -File scripts/build.ps1
 ```
 
-缺少 `.syso` 时 exe 仍可运行，但任务栏和资源管理器里没有应用图标，也没有版本信息。
-窗口在启动时按主屏工作区自适应（默认 1360×860，随屏幕缩小到 900×600 下限），
-全部页面在 900px 宽度下仍可用。
-完整 HTTPS URL 需要 MITM 和本地根证书，不纳入首版。
+脚本会执行前端检查、Vite 生产构建、Wails 绑定与图标生成，最后输出单文件 exe、桌面 zip 和 SHA-256。详细说明见 [docs/RELEASE.md](docs/RELEASE.md)。
 
-发布便携版与 SHA-256：
+## 界面
 
-```powershell
-pwsh -File scripts/release.ps1
-```
-
-产物写入 `dist/`，详细清单见 [`docs/RELEASE.md`](docs/RELEASE.md)。
-
-## 状态
-
-当前仓库处于架构设计阶段。下一步先实现网关和 CLI 核心，再接入 Wails 桌面控制台。
-
-## 界面预览
-
-静态高保真稿位于 [`design/mockup.html`](design/mockup.html)，采用 magpie 风格的浅色面板、
-紧凑列表、紫色强调和可读性优先的数据图表。
-
-| 总览 | 请求日志 |
+| 请求日志 | 检查 |
 |---|---|
-| ![总览](design/screenshots/magpie-overview.png) | ![请求日志](design/screenshots/magpie-requests.png) |
+| ![请求日志](docs/screenshots/requests.png) | ![检查](docs/screenshots/checks.png) |
 
-| 检查 | 设置 |
+| 设置 | 关于 |
 |---|---|
-| ![检查](design/screenshots/magpie-tests.png) | ![设置](design/screenshots/magpie-settings.png) |
+| ![设置](docs/screenshots/settings.png) | ![关于](docs/screenshots/about.png) |

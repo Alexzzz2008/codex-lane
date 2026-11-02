@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type { Dependency, SettingsInput, Snapshot, UpdateStatus, UpstreamStatus } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
+  import type { Dependency, SettingsInput, Snapshot, UpdateStatus, UpstreamProbeResult, UpstreamStatus } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
   import { AppService } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/appservice";
   import Icon from "./Icon.svelte";
   import { clockDate, formatDuration, upstreamProtocol } from "./format";
@@ -82,6 +82,31 @@
   let saveTimer: number | undefined;
   let installing = $state("");
   let installNote = $state("");
+  let newProfileName = $state("");
+  let newProfileProtocol = $state("http");
+  let newProfileHost = $state("");
+  let newProfilePort = $state(7897);
+  let newRoutePattern = $state("");
+  let newRouteAction = $state("proxy");
+  let newHost = $state("");
+  let profileError = $state("");
+  let routeError = $state("");
+  let hostError = $state("");
+  let speedResults = $state<UpstreamProbeResult[] | null>(null);
+  let speedBusy = $state(false);
+
+  const speedByName = $derived(new Map((speedResults ?? []).map((item) => [item.name, item])));
+  const fastestName = $derived.by(() => {
+    let best: string | null = null;
+    let bestLatency = Number.POSITIVE_INFINITY;
+    for (const item of speedResults ?? []) {
+      if (item.reachable && item.latencyMs < bestLatency) {
+        best = item.name;
+        bestLatency = item.latencyMs;
+      }
+    }
+    return best;
+  });
 
   const ruleGroup = "🤖AI网站";
   const requiredDomains: Array<{ domain: string; purpose: string; optional?: boolean }> = [
@@ -164,8 +189,24 @@
   }
 
   onMount(() => {
+    newProfileProtocol = snapshot.settings.protocol || "http";
+    newProfileHost = snapshot.settings.host || "127.0.0.1";
+    newProfilePort = snapshot.settings.port || 7897;
     void loadDependencies();
   });
+
+  async function runSpeedTest() {
+    speedBusy = true;
+    profileError = "";
+    try {
+      speedResults = (await AppService.ProbeAllUpstreams()) ?? [];
+      if (speedResults.length === 0) profileError = "还没有档案可测速";
+    } catch (error) {
+      profileError = error instanceof Error ? error.message : String(error);
+    } finally {
+      speedBusy = false;
+    }
+  }
 
   async function installDependency(dep: Dependency) {
     installNote = "";
@@ -202,7 +243,7 @@
       return;
     }
     autosaving = true;
-    const payload = { ...draft };
+    const payload = prunedDraft();
     const success = await onSave(payload);
     autosaving = false;
     if (success) {
@@ -217,12 +258,22 @@
   }
 
   async function save() {
-    const success = await onSave({ ...draft });
+    const payload = prunedDraft();
+    const success = await onSave(payload);
     if (success) {
       dirty = false;
-      baseline = JSON.stringify(draft);
+      baseline = JSON.stringify(payload);
       lastIncoming = baseline;
     }
+  }
+
+  function prunedDraft(): SettingsInput {
+    return {
+      ...draft,
+      upstreams: profiles.filter((item) => item.name.trim() && item.host.trim() && item.port >= 1 && item.port <= 65535),
+      routes: routes.filter((item) => item.pattern.trim()),
+      allowedHosts: allowedHosts.filter((item) => item.trim()),
+    };
   }
 
   async function testUpstream() {
@@ -236,21 +287,49 @@
   }
 
   function addProfile() {
-    const index = profiles.length + 1;
-    draft.upstreams = [...(draft.upstreams ?? []), { name: `档案 ${index}`, protocol: draft.protocol, host: draft.host, port: draft.port }];
-    scheduleAutoSave();
+    const name = newProfileName.trim() || `档案 ${profiles.length + 1}`;
+    const host = newProfileHost.trim();
+    profileError = "";
+    if (!host) {
+      profileError = "请先填写档案地址";
+      return;
+    }
+    if (!(newProfilePort >= 1 && newProfilePort <= 65535)) {
+      profileError = "端口需在 1-65535 之间";
+      return;
+    }
+    if (profiles.some((item) => item.name === name)) {
+      profileError = `档案名称「${name}」已存在`;
+      return;
+    }
+    draft.upstreams = [...profiles, { name, protocol: newProfileProtocol, host, port: newProfilePort }];
+    newProfileName = "";
+    speedResults = null;
+    touch();
   }
 
   function removeProfile(index: number) {
     const removed = profiles[index];
     draft.upstreams = profiles.filter((_, i) => i !== index);
     if (draft.activeUpstream === removed?.name) draft.activeUpstream = "";
+    speedResults = null;
     scheduleAutoSave();
   }
 
   function addRoute() {
-    draft.routes = [...routes, { pattern: "", action: "proxy" }];
-    scheduleAutoSave();
+    const pattern = newRoutePattern.trim();
+    routeError = "";
+    if (!pattern) {
+      routeError = "请先填写域名模式，例如 *.openai.com";
+      return;
+    }
+    if (routes.some((item) => item.pattern === pattern)) {
+      routeError = `规则「${pattern}」已存在`;
+      return;
+    }
+    draft.routes = [...routes, { pattern, action: newRouteAction }];
+    newRoutePattern = "";
+    touch();
   }
 
   function removeRoute(index: number) {
@@ -259,8 +338,19 @@
   }
 
   function addAllowedHost() {
-    draft.allowedHosts = [...allowedHosts, ""];
-    scheduleAutoSave();
+    const host = newHost.trim();
+    hostError = "";
+    if (!host) {
+      hostError = "请先填写要放行的域名";
+      return;
+    }
+    if (allowedHosts.includes(host)) {
+      hostError = `域名「${host}」已在白名单中`;
+      return;
+    }
+    draft.allowedHosts = [...allowedHosts, host];
+    newHost = "";
+    touch();
   }
 
   function removeAllowedHost(index: number) {
@@ -271,6 +361,37 @@
   function toggleAllowlist() {
     draft.hostFilterMode = draft.hostFilterMode === "allowlist" ? "off" : "allowlist";
     scheduleAutoSave();
+  }
+
+  function moveRoute(index: number, direction: -1 | 1) {
+    const target = index + direction;
+    if (target < 0 || target >= routes.length) return;
+    const next = [...routes];
+    const [item] = next.splice(index, 1);
+    next.splice(target, 0, item);
+    draft.routes = next;
+    scheduleAutoSave();
+  }
+
+  function submitOnEnter(event: KeyboardEvent, action: () => void) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      action();
+    }
+  }
+
+  async function enableProfile(name: string) {
+    if (busy === "switch" || busy === "save") return;
+    const saved = await onSave(prunedDraft());
+    if (!saved) return;
+    await onSwitchUpstream(name);
+  }
+
+  async function selectFastest() {
+    if (busy === "switch" || busy === "save") return;
+    const saved = await onSave(prunedDraft());
+    if (!saved) return;
+    await onSelectFastest();
   }
 
   function restoreDefaults() {
@@ -392,72 +513,128 @@
       </article>
 
       <article class="panel settings-card">
-        <div class="panel-head"><div><h2 class="panel-title">上游档案</h2><p class="panel-sub">保存多套代理地址，一键切换或自动选最快；切换会立即重启 Lane。</p></div><div class="right"><button class="btn small" onclick={addProfile}><Icon name="plus" size={13} />添加档案</button><button class="btn small" onclick={() => void onSelectFastest()} disabled={busy === "switch"}>{#if busy === "switch"}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}测速选优</button></div></div>
-        {#if profiles.length}
-          <div class="rule-table">
-            {#each profiles as profile, index}
-              <div class="rule-row">
-                <input class="text-input" style="width:110px" bind:value={profile.name} oninput={touch} aria-label="档案名称" />
-                <select class="native-select" bind:value={profile.protocol} onchange={touch} aria-label="档案协议">
-                  <option value="http">HTTP</option>
-                  <option value="https">HTTPS</option>
-                  <option value="socks5">SOCKS5</option>
-                </select>
-                <input class="text-input" style="width:118px" bind:value={profile.host} oninput={touch} aria-label="档案地址" />
-                <input class="text-input" style="width:76px" type="number" min="1" max="65535" bind:value={profile.port} oninput={touch} aria-label="档案端口" />
-                {#if profile.name === draft.activeUpstream}
-                  <em class="ok">使用中</em>
-                {:else}
-                  <button class="btn small" onclick={() => void onSwitchUpstream(profile.name)} disabled={busy === "switch"}>启用</button>
+        <div class="panel-head"><div><h2 class="panel-title">上游档案</h2><p class="panel-sub">保存多套代理地址，一键启用或自动选最快；启用会立即重启 Lane。</p></div></div>
+        <div class="entry-list">
+          <div class="entry-head grid-profiles"><span>档案名称</span><span>协议</span><span>地址</span><span>端口</span><span>操作</span></div>
+          {#each profiles as profile, index (profile.name)}
+            <div class="entry-row grid-profiles">
+              <input class="text-input" bind:value={profile.name} oninput={touch} aria-label="档案名称" />
+              <select class="native-select" bind:value={profile.protocol} onchange={touch} aria-label="档案协议">
+                <option value="http">HTTP</option>
+                <option value="https">HTTPS</option>
+                <option value="socks5">SOCKS5</option>
+              </select>
+              <input class="text-input" bind:value={profile.host} oninput={touch} aria-label="档案地址" />
+              <input class="text-input" type="number" min="1" max="65535" bind:value={profile.port} oninput={touch} aria-label="档案端口" />
+              <div class="entry-actions">
+                {#if speedByName.get(profile.name)}
+                  {@const result = speedByName.get(profile.name)}
+                  {#if result && result.reachable}
+                    <span class="result-pill pass" title="CONNECT 延迟">{result.latencyMs} ms{fastestName === profile.name ? " · 最快" : ""}</span>
+                  {:else if result}
+                    <span class="result-pill fail" title={result.error}>不可达</span>
+                  {:else}
+                    <span class="result-pill pending">未测速</span>
+                  {/if}
                 {/if}
-                <button class="btn small" onclick={() => removeProfile(index)} aria-label={`删除档案 ${profile.name}`}><Icon name="x" size={12} /></button>
+                {#if profile.name === draft.activeUpstream}
+                  <span class="result-pill pass">使用中</span>
+                {:else}
+                  <button class="btn small" onclick={() => void enableProfile(profile.name)} disabled={busy === "switch" || busy === "save"}>启用</button>
+                {/if}
+                <button class="icon-btn danger" onclick={() => removeProfile(index)} aria-label={`删除档案 ${profile.name}`} title="删除档案"><Icon name="x" size={12} /></button>
               </div>
-            {/each}
+            </div>
+          {:else}
+            <div class="entry-empty">还没有档案。在下方把当前代理存为第一套档案，也可以继续只使用单代理配置。</div>
+          {/each}
+          <div class="entry-foot grid-profiles">
+            <input class="text-input" placeholder="名称" bind:value={newProfileName} aria-label="新档案名称" />
+            <select class="native-select" bind:value={newProfileProtocol} aria-label="新档案协议">
+              <option value="http">HTTP</option>
+              <option value="https">HTTPS</option>
+              <option value="socks5">SOCKS5</option>
+            </select>
+            <input class="text-input" placeholder="地址，如 127.0.0.1" bind:value={newProfileHost} aria-label="新档案地址" />
+            <input class="text-input" type="number" min="1" max="65535" placeholder="端口" bind:value={newProfilePort} aria-label="新档案端口" />
+            <button class="btn small" onclick={addProfile}><Icon name="plus" size={13} />添加</button>
           </div>
-        {:else}
-          <div class="setting-row" style="background:#fbfbfc"><div class="setting-copy"><b>还没有档案</b><span>点「添加档案」把当前代理存为第一套档案；也可以直接只使用上方的单代理配置。</span></div></div>
-        {/if}
+        </div>
+        {#if profileError}<p class="entry-error">{profileError}</p>{/if}
         <div class="setting-row">
           <div class="setting-copy"><b>故障自动切换</b><span>连续两次探测失败时，自动切到第一个可用的其他档案。</span></div>
-          <div class="setting-control"><button class:off={!draft.autoFailover} class="switch" aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control">
+            <button class:off={!draft.autoFailover} class="switch" aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave(); }}></button>
+            <button class="btn small" onclick={() => void runSpeedTest()} disabled={speedBusy || busy === "switch" || busy === "save"}>
+              {#if speedBusy}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}
+              测速
+            </button>
+            <button class="btn small" onclick={() => void selectFastest()} disabled={busy === "switch" || busy === "save"}>
+              {#if busy === "switch"}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}
+              测速选优
+            </button>
+          </div>
         </div>
       </article>
 
       <article class="panel settings-card">
-        <div class="panel-head"><div><h2 class="panel-title">分流与访问控制</h2><p class="panel-sub">命中「直连」的域名绕过上游；开启白名单后，未列出的域名会被 Lane 拒绝。</p></div><div class="right"><span class={`result-pill ${draft.hostFilterMode === "allowlist" ? "run" : "skip"}`}>{draft.hostFilterMode === "allowlist" ? "白名单开启" : "白名单关闭"}</span></div></div>
-        <div class="rule-table">
-          {#each routes as route, index}
-            <div class="rule-row">
-              <input class="text-input" style="width:190px" placeholder="*.openai.com" bind:value={route.pattern} oninput={touch} aria-label="分流模式" />
-              <select class="native-select" bind:value={route.action} onchange={touch} aria-label="分流动作">
+        <div class="panel-head"><div><h2 class="panel-title">分流规则</h2><p class="panel-sub">从上到下按序匹配，第一条命中的规则生效；未命中的域名走当前上游。支持 *.domain.com、精确域名或 *。</p></div><div class="right"><span class="result-pill skip">{routes.length} 条</span></div></div>
+        <div class="entry-list">
+          <div class="entry-head grid-routes"><span>#</span><span>域名模式</span><span>动作</span><span>操作</span></div>
+          {#each routes as route, index (index)}
+            <div class="entry-row grid-routes">
+              <span class="entry-index">{index + 1}</span>
+              <input class="text-input" placeholder="*.openai.com" bind:value={route.pattern} oninput={touch} aria-label={`规则 ${index + 1} 域名模式`} />
+              <select class="native-select" bind:value={route.action} onchange={touch} aria-label={`规则 ${index + 1} 动作`}>
                 <option value="proxy">走代理</option>
                 <option value="direct">直连</option>
               </select>
-              <span class="muted">支持 *.domain.com、精确域名或 *</span>
-              <button class="btn small" onclick={() => removeRoute(index)} aria-label={`删除规则 ${route.pattern}`}><Icon name="x" size={12} /></button>
+              <div class="entry-actions">
+                <button class="icon-btn" disabled={index === 0} onclick={() => moveRoute(index, -1)} aria-label={`上移规则 ${route.pattern}`} title="上移"><span class="flip"><Icon name="chevron" size={13} /></span></button>
+                <button class="icon-btn" disabled={index === routes.length - 1} onclick={() => moveRoute(index, 1)} aria-label={`下移规则 ${route.pattern}`} title="下移"><Icon name="chevron" size={13} /></button>
+                <button class="icon-btn danger" onclick={() => removeRoute(index)} aria-label={`删除规则 ${route.pattern}`} title="删除"><Icon name="x" size={12} /></button>
+              </div>
             </div>
+          {:else}
+            <div class="entry-empty">暂无规则，所有域名都会走当前上游。</div>
           {/each}
+          <div class="entry-foot grid-routes">
+            <span class="entry-index">+</span>
+            <input class="text-input" placeholder="*.openai.com 或 api.example.com" bind:value={newRoutePattern} onkeydown={(event) => submitOnEnter(event, addRoute)} aria-label="新规则域名模式" />
+            <select class="native-select" bind:value={newRouteAction} aria-label="新规则动作">
+              <option value="proxy">走代理</option>
+              <option value="direct">直连</option>
+            </select>
+            <button class="btn small" onclick={addRoute}><Icon name="plus" size={13} />添加</button>
+          </div>
         </div>
+        {#if routeError}<p class="entry-error">{routeError}</p>{/if}
         <div class="setting-row">
-          <div class="setting-copy"><b>添加分流规则</b><span>按顺序匹配，第一条命中的规则生效；未命中的域名走当前上游。</span></div>
-          <div class="setting-control"><button class="btn small" onclick={addRoute}><Icon name="plus" size={13} />添加规则</button></div>
-        </div>
-        <div class="setting-row">
-          <div class="setting-copy"><b>域名白名单</b><span>只放行列出的域名，防止本机其他程序借用 Lane 出网。</span></div>
+          <div class="setting-copy"><b>域名白名单</b><span>开启后只放行列出的域名，防止本机其他程序借用 Lane 出网。</span></div>
           <div class="setting-control">
             <button class:off={draft.hostFilterMode !== "allowlist"} class="switch" aria-label="域名白名单" onclick={toggleAllowlist}></button>
-            <button class="btn small" onclick={addAllowedHost} disabled={draft.hostFilterMode !== "allowlist"}><Icon name="plus" size={13} />添加域名</button>
+            <span class={`result-pill ${draft.hostFilterMode === "allowlist" ? "run" : "skip"}`}>{draft.hostFilterMode === "allowlist" ? "已开启" : "已关闭"}</span>
           </div>
         </div>
         {#if draft.hostFilterMode === "allowlist"}
-          <div class="rule-table">
-            {#each allowedHosts as host, index}
-              <div class="rule-row">
-                <input class="text-input" style="width:190px" placeholder="*.openai.com" value={host} oninput={(event) => { allowedHosts[index] = (event.currentTarget as HTMLInputElement).value; touch(); }} aria-label="白名单域名" />
-                <button class="btn small" onclick={() => removeAllowedHost(index)} aria-label={`删除白名单 ${host}`}><Icon name="x" size={12} /></button>
+          <div class="entry-list">
+            <div class="entry-head grid-hosts"><span>放行域名（{allowedHosts.length}）</span><span>操作</span></div>
+            {#each allowedHosts as host, index (host + index)}
+              <div class="entry-row grid-hosts">
+                <code class="host-code">{host}</code>
+                <div class="entry-actions">
+                  <button class="icon-btn danger" onclick={() => removeAllowedHost(index)} aria-label={`删除白名单 ${host}`} title="删除"><Icon name="x" size={12} /></button>
+                </div>
               </div>
+            {:else}
+              <div class="entry-empty">白名单已开启但还没有域名，未列出的域名都会被 Lane 拒绝。</div>
             {/each}
+            <div class="entry-foot grid-hosts">
+              <input class="text-input" placeholder="*.openai.com" bind:value={newHost} onkeydown={(event) => submitOnEnter(event, addAllowedHost)} aria-label="新白名单域名" />
+              <button class="btn small" onclick={addAllowedHost}><Icon name="plus" size={13} />添加</button>
+            </div>
           </div>
+          {#if hostError}<p class="entry-error">{hostError}</p>{/if}
         {/if}
       </article>
 
@@ -633,3 +810,107 @@
     </aside>
   </div>
 </section>
+
+<style>
+  .entry-list {
+    margin: 0 18px 12px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    overflow: hidden;
+    background: #fff;
+  }
+  .entry-head,
+  .entry-row,
+  .entry-foot {
+    display: grid;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .entry-head {
+    height: 34px;
+    background: #fbfbfc;
+    border-bottom: 1px solid var(--line);
+    color: var(--text-3);
+    font-size: 11px;
+    font-weight: 650;
+  }
+  .entry-row {
+    min-height: 46px;
+    border-bottom: 1px solid #f0f0f4;
+  }
+  .entry-row:hover {
+    background: #fafafd;
+  }
+  .entry-foot {
+    min-height: 50px;
+    background: #fbfbfc;
+    border-top: 1px solid var(--line);
+  }
+  .entry-empty {
+    padding: 18px 12px;
+    color: var(--text-3);
+    font-size: 12px;
+    text-align: center;
+  }
+  .entry-index {
+    color: var(--text-4);
+    font: 11px var(--mono);
+    text-align: center;
+  }
+  .entry-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+  .entry-error {
+    margin: -4px 20px 10px;
+    color: var(--red);
+    font-size: 11.5px;
+  }
+  .grid-profiles {
+    grid-template-columns: 118px 88px 1fr 76px auto;
+  }
+  .grid-routes {
+    grid-template-columns: 28px 1fr 104px auto;
+  }
+  .grid-hosts {
+    grid-template-columns: 1fr auto;
+  }
+  .icon-btn {
+    width: 28px;
+    height: 28px;
+    flex: none;
+    display: grid;
+    place-items: center;
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    background: #fff;
+    color: var(--text-3);
+  }
+  .icon-btn:hover {
+    color: var(--text-1);
+    border-color: #d9d9e0;
+  }
+  .icon-btn.danger:hover {
+    color: var(--red);
+    border-color: var(--red-line);
+    background: var(--red-soft);
+  }
+  .icon-btn:disabled {
+    opacity: 0.4;
+    pointer-events: none;
+  }
+  .flip {
+    display: inline-flex;
+    transform: rotate(180deg);
+  }
+  .host-code {
+    font: 12px var(--mono);
+    color: var(--text-2);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+</style>

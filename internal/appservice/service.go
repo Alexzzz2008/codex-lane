@@ -23,7 +23,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/preflight"
 )
 
-const Version = "0.1.22"
+const Version = "0.1.24"
 
 type Emitter func(name string, data ...any)
 
@@ -518,8 +518,10 @@ func (s *AppService) ExportReport() (string, error) {
 
 func (s *AppService) OpenLogsFolder() error {
 	paths := s.currentPaths()
-	cmd := platform.StartProcess("explorer.exe", paths.LogDirectory)
-	return cmd
+	if err := os.MkdirAll(paths.LogDirectory, 0o700); err != nil {
+		return err
+	}
+	return platform.OpenURL(paths.LogDirectory)
 }
 
 func (s *AppService) OpenConfigFolder() error {
@@ -528,7 +530,7 @@ func (s *AppService) OpenConfigFolder() error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
-	return platform.StartProcess("explorer.exe", dir)
+	return platform.OpenURL(dir)
 }
 
 func (s *AppService) OpenProjectPage(target string) error {
