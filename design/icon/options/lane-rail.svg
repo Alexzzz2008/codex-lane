@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="180" y1="96" x2="864" y2="928" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#272632"/>
+      <stop offset="1" stop-color="#121318"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="426" y1="720" x2="676" y2="304" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7b69ed"/>
+      <stop offset="1" stop-color="#b3a8ff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0" cy="0" r="1" gradientTransform="translate(512 370) rotate(90) scale(520)">
+      <stop stop-color="#9b8cff" stop-opacity=".13"/>
+      <stop offset="1" stop-color="#9b8cff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="56" y="56" width="912" height="912" rx="212" fill="url(#bg)"/>
+  <rect x="56" y="56" width="912" height="912" rx="212" fill="url(#glow)"/>
+  <rect x="57.5" y="57.5" width="909" height="909" rx="210.5" fill="none" stroke="#fff" stroke-opacity=".1" stroke-width="3"/>
+  <g fill="none" stroke-linecap="round">
+    <path d="M232 726 442 296" stroke="#f7f6ff" stroke-width="82"/>
+    <path d="M392 726 602 296" stroke="#9385f4" stroke-width="82"/>
+    <path d="M552 726 762 296" stroke="#f7f6ff" stroke-opacity=".34" stroke-width="82"/>
+  </g>
+</svg>

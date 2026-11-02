@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Codex Lane Icon Directions</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
+    body {
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 44px;
+      color: #202027;
+      background:
+        radial-gradient(circle at 50% 0, #fff 0, rgba(255,255,255,0) 44%),
+        #e8e8ec;
+      font-family: "Segoe UI Variable Text", "Segoe UI", sans-serif;
+    }
+    .sheet { display: flex; gap: 42px; align-items: flex-start; }
+    .design { width: 360px; }
+    .tile {
+      position: relative;
+      width: 360px;
+      height: 360px;
+      overflow: hidden;
+      border-radius: 84px;
+      isolation: isolate;
+      box-shadow:
+        0 28px 55px rgba(30,30,48,.2),
+        0 5px 12px rgba(30,30,48,.08);
+    }
+    .tile::after {
+      content: "";
+      position: absolute;
+      inset: 1px;
+      z-index: 10;
+      border: 1px solid rgba(255,255,255,.36);
+      border-radius: 83px;
+      pointer-events: none;
+    }
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-end;
+      margin-top: 18px;
+      padding: 0 4px;
+    }
+    .meta b { display: block; font-size: 16px; font-weight: 700; letter-spacing: -.02em; }
+    .meta span { display: block; margin-top: 3px; color: #74747e; font-size: 12px; }
+    .mini-row { display: flex; align-items: flex-end; gap: 12px; }
+    .mini-frame {
+      position: relative;
+      overflow: hidden;
+      border-radius: 8px;
+      box-shadow: 0 4px 9px rgba(24,24,38,.15);
+    }
+    .mini-frame .tile {
+      transform-origin: top left;
+      box-shadow: none;
+    }
+    .aurora {
+      background:
+        radial-gradient(circle at 28% 17%, #34305d 0, #1c1a2b 45%, #0f0f16 100%);
+    }
+    .aurora::before {
+      content: "";
+      position: absolute;
+      inset: -30%;
+      background:
+        radial-gradient(circle at 68% 70%, rgba(112,94,238,.2), transparent 38%),
+        radial-gradient(circle at 30% 82%, rgba(67,209,201,.12), transparent 34%);
+    }
+    .ribbon {
+      position: absolute;
+      inset: 30px 22px;
+      width: 316px;
+      height: 300px;
+      overflow: visible;
+    }
+    .glass {
+      background:
+        linear-gradient(145deg, #fbfaf7 0%, #efeaf5 48%, #e2e9ec 100%);
+    }
+    .glass::before {
+      content: "";
+      position: absolute;
+      width: 270px;
+      height: 270px;
+      left: -80px;
+      top: -110px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,189,202,.7), rgba(255,189,202,0) 68%);
+      filter: blur(10px);
+    }
+    .drop {
+      position: absolute;
+      width: 212px;
+      height: 230px;
+      left: 74px;
+      top: 68px;
+      transform: rotate(-18deg);
+      border-radius: 46% 54% 60% 40% / 54% 42% 58% 46%;
+      background:
+        radial-gradient(circle at 26% 18%, rgba(255,255,255,.98) 0, rgba(255,255,255,.15) 20%, transparent 40%),
+        linear-gradient(145deg, rgba(255,255,255,.88) 0%, rgba(177,158,255,.76) 40%, rgba(91,211,197,.66) 72%, rgba(112,84,220,.72) 100%);
+      box-shadow:
+        inset 13px 15px 26px rgba(255,255,255,.64),
+        inset -20px -28px 34px rgba(83,57,178,.22),
+        0 28px 42px rgba(80,70,130,.22);
+      backdrop-filter: blur(16px);
+    }
+    .drop::before {
+      content: "";
+      position: absolute;
+      width: 104px;
+      height: 74px;
+      left: 29px;
+      top: 23px;
+      border-radius: 50%;
+      background: rgba(255,255,255,.48);
+      filter: blur(10px);
+      transform: rotate(24deg);
+    }
+    .drop::after {
+      content: "";
+      position: absolute;
+      width: 116px;
+      height: 106px;
+      right: 15px;
+      bottom: 16px;
+      border-radius: 50%;
+      background: radial-gradient(circle at 35% 30%, rgba(255,255,255,.5), rgba(255,255,255,0) 68%);
+      mix-blend-mode: screen;
+    }
+    .orb {
+      position: absolute;
+      width: 74px;
+      height: 74px;
+      right: 46px;
+      bottom: 52px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 32% 26%, #fff 0, #e3dcff 13%, #9783f6 38%, #5542bc 72%, #29215f 100%);
+      box-shadow:
+        inset -8px -11px 14px rgba(29,19,81,.35),
+        0 13px 25px rgba(83,65,160,.3);
+    }
+    .eclipse {
+      background:
+        radial-gradient(circle at 50% 46%, #202044 0, #141625 45%, #0c0e13 100%);
+    }
+    .eclipse::before {
+      content: "";
+      position: absolute;
+      inset: -20%;
+      background:
+        radial-gradient(circle at 62% 68%, rgba(108,87,239,.34), transparent 30%),
+        radial-gradient(circle at 30% 35%, rgba(69,202,203,.16), transparent 32%);
+      filter: blur(16px);
+    }
+    .planet {
+      position: absolute;
+      width: 224px;
+      height: 224px;
+      left: 74px;
+      top: 72px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 28% 22%, #fff 0, #d7d0ff 8%, #9d8bf5 27%, #5e48cc 54%, #271c76 76%, #12121d 100%);
+      box-shadow:
+        0 0 42px rgba(124,100,255,.48),
+        inset -22px -24px 38px rgba(14,13,35,.5);
+    }
+    .planet::before {
+      content: "";
+      position: absolute;
+      width: 224px;
+      height: 224px;
+      left: 72px;
+      top: -35px;
+      border-radius: 50%;
+      background:
+        radial-gradient(circle at 38% 38%, #202043 0, #141523 52%, #0b0d12 100%);
+      box-shadow: -17px 8px 28px rgba(8,8,16,.34);
+    }
+    .planet::after {
+      content: "";
+      position: absolute;
+      width: 136px;
+      height: 136px;
+      left: 74px;
+      top: 76px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,.12);
+      box-shadow:
+        inset 0 0 24px rgba(187,175,255,.1),
+        0 0 16px rgba(187,175,255,.12);
+    }
+  </style>
+</head>
+<body>
+  <main class="sheet">
+    <article class="design">
+      <div class="tile aurora">
+        <svg class="ribbon" viewBox="0 0 512 512" fill="none" aria-hidden="true">
+          <defs>
+            <linearGradient id="aurora-gradient" x1="125" y1="360" x2="390" y2="140" gradientUnits="userSpaceOnUse">
+              <stop stop-color="#55d9d6" />
+              <stop offset=".38" stop-color="#7e74ff" />
+              <stop offset=".7" stop-color="#c675ff" />
+              <stop offset="1" stop-color="#ff9ec7" />
+            </linearGradient>
+            <filter id="ribbon-glow" x="-40%" y="-40%" width="180%" height="180%">
+              <feGaussianBlur stdDeviation="20" />
+            </filter>
+            <filter id="ribbon-soft" x="-20%" y="-20%" width="140%" height="140%">
+              <feGaussianBlur stdDeviation="4" />
+            </filter>
+          </defs>
+          <path
+            d="M148 343c22-113 111-184 196-163 71 17 99 84 57 124-42 40-121 18-137-39-16-60 44-103 109-82 75 24 104 114 49 172"
+            stroke="url(#aurora-gradient)"
+            stroke-width="120"
+            stroke-linecap="round"
+            opacity=".33"
+            filter="url(#ribbon-glow)"
+          />
+          <path
+            d="M148 343c22-113 111-184 196-163 71 17 99 84 57 124-42 40-121 18-137-39-16-60 44-103 109-82 75 24 104 114 49 172"
+            stroke="url(#aurora-gradient)"
+            stroke-width="88"
+            stroke-linecap="round"
+          />
+          <path
+            d="M148 343c22-113 111-184 196-163 71 17 99 84 57 124-42 40-121 18-137-39-16-60 44-103 109-82 75 24 104 114 49 172"
+            stroke="rgba(255,255,255,.48)"
+            stroke-width="18"
+            stroke-linecap="round"
+            opacity=".72"
+            filter="url(#ribbon-soft)"
+          />
+        </svg>
+      </div>
+      <div class="meta"><div><b>Aurora</b><span>Fluid luminous ribbon</span></div><div class="mini-row"></div></div>
+    </article>
+
+    <article class="design">
+      <div class="tile glass">
+        <div class="drop"></div>
+        <div class="orb"></div>
+      </div>
+      <div class="meta"><div><b>Glass</b><span>Translucent liquid form</span></div><div class="mini-row"></div></div>
+    </article>
+
+    <article class="design">
+      <div class="tile eclipse">
+        <div class="planet"></div>
+      </div>
+      <div class="meta"><div><b>Eclipse</b><span>Luminous hidden core</span></div><div class="mini-row"></div></div>
+    </article>
+  </main>
+  <script>
+    document.querySelectorAll(".design").forEach((design) => {
+      const source = design.querySelector(".tile");
+      const row = design.querySelector(".mini-row");
+      for (const size of [32, 16]) {
+        const frame = document.createElement("div");
+        frame.className = "mini-frame";
+        frame.style.width = `${size}px`;
+        frame.style.height = `${size}px`;
+        const clone = source.cloneNode(true);
+        clone.style.transform = `scale(${size / 360})`;
+        clone.style.borderRadius = `${(84 * size) / 360}px`;
+        frame.appendChild(clone);
+        row.appendChild(frame);
+      }
+    });
+  </script>
+</body>
+</html>
