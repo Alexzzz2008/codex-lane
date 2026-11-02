@@ -17,11 +17,6 @@
       "M8 21h8M12 17v4",
       "m9.5 9 2.5 1.8L14.5 9",
     ],
-    lane: [
-      "M5 18V8.5L12 4l7 4.5V18",
-      "M8.3 18v-6.3l3.7-2.4 3.7 2.4V18",
-      "M12 14.9a1.4 1.4 0 1 0 0-2.8 1.4 1.4 0 0 0 0 2.8Z",
-    ],
     shield: [
       "m4.5 6 7.5-3 7.5 3v6.3c0 4.4-3.1 7.9-7.5 9.2-4.4-1.3-7.5-4.8-7.5-9.2V6Z",
       "M8 11.8h8M8 15h5",
@@ -52,6 +47,7 @@
     external: ["M14 5h5v5M19 5l-8 8", "M18 14v5H5V6h5"],
     alert: ["M12 4 3.8 19h16.4L12 4Z", "M12 9v4M12 16h.01"],
     x: ["M6 6l12 12M18 6 6 18"],
+    plus: ["M12 5v14M5 12h14"],
     chevron: ["m7 10 5 5 5-5"],
     layers: ["m12 4 8 4-8 4-8-4 8-4Z", "m4 12 8 4 8-4M4 16l8 4 8-4"],
   };
@@ -63,9 +59,10 @@
       d={path}
       fill={name === "mark" && index === 2 ? "#ffffff" : "none"}
       stroke={name === "mark" && index === 2 ? "none" : "currentColor"}
-      stroke-width={stroke}
+      stroke-width={name === "mark" ? 1.4 : stroke}
       stroke-linecap="round"
       stroke-linejoin="round"
+      transform={name === "mark" ? "translate(12 11.5) scale(1.35) translate(-12 -11.5)" : undefined}
     />
   {/each}
 </svg>

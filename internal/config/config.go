@@ -35,9 +35,9 @@ func Default() model.Config {
 		AskBeforeKill:       true,
 		RequireHealthyProxy: true,
 		Startup: model.Startup{
-		OpenCodex:       false,
-		StopCodexOnExit: false,
-		MinimizeToTray:  true,
+			OpenCodex:       false,
+			StopCodexOnExit: false,
+			MinimizeToTray:  true,
 		},
 		Logging: model.Logging{
 			RequestMetadata: true,

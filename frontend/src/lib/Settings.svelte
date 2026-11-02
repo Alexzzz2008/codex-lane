@@ -13,6 +13,8 @@
     onCheckUpdate,
     onOpenProject,
     onOpenConfigFolder,
+    onSwitchUpstream,
+    onSelectFastest,
   }: {
     snapshot: Snapshot;
     busy?: string;
@@ -21,6 +23,8 @@
     onCheckUpdate: (silent?: boolean) => Promise<UpdateStatus | null>;
     onOpenProject: (target: "repository" | "releases") => Promise<void>;
     onOpenConfigFolder: () => Promise<void>;
+    onSwitchUpstream: (name: string) => Promise<void>;
+    onSelectFastest: () => Promise<boolean>;
   } = $props();
 
   const defaultDraft: SettingsInput = {
@@ -124,6 +128,14 @@
     "stopCodexOnExit",
     "retentionDays",
     "maxMemoryRows",
+    "upstreams",
+    "activeUpstream",
+    "autoFailover",
+    "hostFilterMode",
+    "allowedHosts",
+    "routes",
+    "minimizeToTray",
+    "launchAtLogin",
   ];
   const changeCount = $derived(
     (() => {
@@ -133,6 +145,9 @@
     })(),
   );
   const distros = $derived(snapshot.wsl?.distros ?? []);
+  const profiles = $derived(draft.upstreams ?? []);
+  const routes = $derived(draft.routes ?? []);
+  const allowedHosts = $derived(draft.allowedHosts ?? []);
   let deps = $state<Dependency[]>([]);
   let depsLoading = $state(false);
   const missingDeps = $derived(deps.filter((item) => !item.ready).length);
@@ -218,6 +233,44 @@
   function cancel() {
     draft = JSON.parse(baseline) as SettingsInput;
     dirty = false;
+  }
+
+  function addProfile() {
+    const index = profiles.length + 1;
+    draft.upstreams = [...(draft.upstreams ?? []), { name: `档案 ${index}`, protocol: draft.protocol, host: draft.host, port: draft.port }];
+    scheduleAutoSave();
+  }
+
+  function removeProfile(index: number) {
+    const removed = profiles[index];
+    draft.upstreams = profiles.filter((_, i) => i !== index);
+    if (draft.activeUpstream === removed?.name) draft.activeUpstream = "";
+    scheduleAutoSave();
+  }
+
+  function addRoute() {
+    draft.routes = [...routes, { pattern: "", action: "proxy" }];
+    scheduleAutoSave();
+  }
+
+  function removeRoute(index: number) {
+    draft.routes = routes.filter((_, i) => i !== index);
+    scheduleAutoSave();
+  }
+
+  function addAllowedHost() {
+    draft.allowedHosts = [...allowedHosts, ""];
+    scheduleAutoSave();
+  }
+
+  function removeAllowedHost(index: number) {
+    draft.allowedHosts = allowedHosts.filter((_, i) => i !== index);
+    scheduleAutoSave();
+  }
+
+  function toggleAllowlist() {
+    draft.hostFilterMode = draft.hostFilterMode === "allowlist" ? "off" : "allowlist";
+    scheduleAutoSave();
   }
 
   function restoreDefaults() {
@@ -339,6 +392,76 @@
       </article>
 
       <article class="panel settings-card">
+        <div class="panel-head"><div><h2 class="panel-title">上游档案</h2><p class="panel-sub">保存多套代理地址，一键切换或自动选最快；切换会立即重启 Lane。</p></div><div class="right"><button class="btn small" onclick={addProfile}><Icon name="plus" size={13} />添加档案</button><button class="btn small" onclick={() => void onSelectFastest()} disabled={busy === "switch"}>{#if busy === "switch"}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}测速选优</button></div></div>
+        {#if profiles.length}
+          <div class="rule-table">
+            {#each profiles as profile, index}
+              <div class="rule-row">
+                <input class="text-input" style="width:110px" bind:value={profile.name} oninput={touch} aria-label="档案名称" />
+                <select class="native-select" bind:value={profile.protocol} onchange={touch} aria-label="档案协议">
+                  <option value="http">HTTP</option>
+                  <option value="https">HTTPS</option>
+                  <option value="socks5">SOCKS5</option>
+                </select>
+                <input class="text-input" style="width:118px" bind:value={profile.host} oninput={touch} aria-label="档案地址" />
+                <input class="text-input" style="width:76px" type="number" min="1" max="65535" bind:value={profile.port} oninput={touch} aria-label="档案端口" />
+                {#if profile.name === draft.activeUpstream}
+                  <em class="ok">使用中</em>
+                {:else}
+                  <button class="btn small" onclick={() => void onSwitchUpstream(profile.name)} disabled={busy === "switch"}>启用</button>
+                {/if}
+                <button class="btn small" onclick={() => removeProfile(index)} aria-label={`删除档案 ${profile.name}`}><Icon name="x" size={12} /></button>
+              </div>
+            {/each}
+          </div>
+        {:else}
+          <div class="setting-row" style="background:#fbfbfc"><div class="setting-copy"><b>还没有档案</b><span>点「添加档案」把当前代理存为第一套档案；也可以直接只使用上方的单代理配置。</span></div></div>
+        {/if}
+        <div class="setting-row">
+          <div class="setting-copy"><b>故障自动切换</b><span>连续两次探测失败时，自动切到第一个可用的其他档案。</span></div>
+          <div class="setting-control"><button class:off={!draft.autoFailover} class="switch" aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave(); }}></button></div>
+        </div>
+      </article>
+
+      <article class="panel settings-card">
+        <div class="panel-head"><div><h2 class="panel-title">分流与访问控制</h2><p class="panel-sub">命中「直连」的域名绕过上游；开启白名单后，未列出的域名会被 Lane 拒绝。</p></div><div class="right"><span class={`result-pill ${draft.hostFilterMode === "allowlist" ? "run" : "skip"}`}>{draft.hostFilterMode === "allowlist" ? "白名单开启" : "白名单关闭"}</span></div></div>
+        <div class="rule-table">
+          {#each routes as route, index}
+            <div class="rule-row">
+              <input class="text-input" style="width:190px" placeholder="*.openai.com" bind:value={route.pattern} oninput={touch} aria-label="分流模式" />
+              <select class="native-select" bind:value={route.action} onchange={touch} aria-label="分流动作">
+                <option value="proxy">走代理</option>
+                <option value="direct">直连</option>
+              </select>
+              <span class="muted">支持 *.domain.com、精确域名或 *</span>
+              <button class="btn small" onclick={() => removeRoute(index)} aria-label={`删除规则 ${route.pattern}`}><Icon name="x" size={12} /></button>
+            </div>
+          {/each}
+        </div>
+        <div class="setting-row">
+          <div class="setting-copy"><b>添加分流规则</b><span>按顺序匹配，第一条命中的规则生效；未命中的域名走当前上游。</span></div>
+          <div class="setting-control"><button class="btn small" onclick={addRoute}><Icon name="plus" size={13} />添加规则</button></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-copy"><b>域名白名单</b><span>只放行列出的域名，防止本机其他程序借用 Lane 出网。</span></div>
+          <div class="setting-control">
+            <button class:off={draft.hostFilterMode !== "allowlist"} class="switch" aria-label="域名白名单" onclick={toggleAllowlist}></button>
+            <button class="btn small" onclick={addAllowedHost} disabled={draft.hostFilterMode !== "allowlist"}><Icon name="plus" size={13} />添加域名</button>
+          </div>
+        </div>
+        {#if draft.hostFilterMode === "allowlist"}
+          <div class="rule-table">
+            {#each allowedHosts as host, index}
+              <div class="rule-row">
+                <input class="text-input" style="width:190px" placeholder="*.openai.com" value={host} oninput={(event) => { allowedHosts[index] = (event.currentTarget as HTMLInputElement).value; touch(); }} aria-label="白名单域名" />
+                <button class="btn small" onclick={() => removeAllowedHost(index)} aria-label={`删除白名单 ${host}`}><Icon name="x" size={12} /></button>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </article>
+
+      <article class="panel settings-card">
         <div class="panel-head"><div><h2 class="panel-title">环境依赖</h2><p class="panel-sub">启动 Lane 前自动检查；缺失项可以直接安装。</p></div><div class="right"><button class="btn small" onclick={loadDependencies} disabled={depsLoading}>{depsLoading ? "检查中…" : "重新检查"}</button><span class={`result-pill ${missingDeps ? "warn" : "pass"}`}>{depsLoading ? "检测中" : missingDeps ? `${missingDeps} 项待处理` : "全部就绪"}</span></div></div>
         <div class="rule-table">
           {#each deps as dep}
@@ -431,6 +554,14 @@
           <div class="setting-control"><button class:off={!draft.stopCodexOnExit} class="switch" aria-label="退出 Lane 时同步停止 Codex" onclick={() => { draft.stopCodexOnExit = !draft.stopCodexOnExit; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
+          <div class="setting-copy"><b>关闭窗口时最小化到托盘</b><span>点关闭按钮隐藏到系统托盘，从托盘菜单退出；重启应用后生效。</span></div>
+          <div class="setting-control"><button class:off={!draft.minimizeToTray} class="switch" aria-label="关闭窗口时最小化到托盘" onclick={() => { draft.minimizeToTray = !draft.minimizeToTray; scheduleAutoSave(); }}></button></div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-copy"><b>开机自动启动</b><span>写入当前用户的注册表 Run 项；改动即时生效。</span></div>
+          <div class="setting-control"><button class:off={!draft.launchAtLogin} class="switch" aria-label="开机自动启动" onclick={() => { draft.launchAtLogin = !draft.launchAtLogin; scheduleAutoSave(); }}></button></div>
+        </div>
+        <div class="setting-row">
           <div class="setting-copy"><b>请求元数据日志</b><span>记录域名、端口、状态、流量和耗时，不读取 HTTPS 内容。</span></div>
           <div class="setting-control">
             <select class="native-select" bind:value={draft.retentionDays} onchange={scheduleAutoSave} aria-label="日志保留天数">
@@ -470,7 +601,7 @@
           <div class="right"><span class="result-pill pass">v{snapshot.version}</span></div>
         </div>
         <div class="about-project">
-          <span class="about-mark"><Icon name="mark" size={20} /></span>
+          <span class="about-mark"><Icon name="mark" size={26} /></span>
           <div><b>Codex Lane</b><span>Codex 的独立进程级代理通道</span></div>
         </div>
         <button class="about-link" onclick={() => onOpenProject("repository")} title="打开 GitHub 仓库">

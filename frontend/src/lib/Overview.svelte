@@ -1,5 +1,6 @@
 <script lang="ts">
-  import type { Snapshot } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
+  import type { HistoryPoint, RequestSeriesPoint, Snapshot } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
+  import { AppService } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/appservice";
   import Icon from "./Icon.svelte";
   import ThroughputChart from "./ThroughputChart.svelte";
   import {
@@ -52,8 +53,38 @@
     { value: 5, label: "5 分钟" },
     { value: 30, label: "30 分钟" },
     { value: 60, label: "60 分钟" },
+    { value: 1440, label: "24 小时" },
+    { value: 10080, label: "7 天" },
   ];
-  const visibleSeries = $derived((snapshot.series ?? []).slice(-rangeMinutes));
+  let history = $state<HistoryPoint[] | null>(null);
+  let historyLoading = $state(false);
+  let historyRange = $state(0);
+
+  $effect(() => {
+    const minutes = rangeMinutes;
+    if (minutes <= 60) return;
+    const hours = minutes / 60;
+    historyRange = 0;
+    historyLoading = true;
+    AppService.History(hours)
+      .then((points) => {
+        history = points ?? [];
+        historyRange = minutes;
+      })
+      .catch(() => {
+        history = [];
+      })
+      .finally(() => {
+        historyLoading = false;
+      });
+  });
+  const visibleSeries = $derived.by(() => {
+    if (rangeMinutes <= 60) return (snapshot.series ?? []).slice(-rangeMinutes);
+    if (historyRange === rangeMinutes && history) {
+      return history.map((point): RequestSeriesPoint => ({ time: point.time, bytesDown: point.bytesDown, latencyMs: point.latencyMs }));
+    }
+    return (snapshot.series ?? []).slice(-30);
+  });
   const routeTitle = $derived(
     lane.running ? "Codex Lane 正在运行" : lane.error ? "Codex Lane 启动异常" : "Codex Lane 已停止",
   );
@@ -100,7 +131,7 @@
 
   <article class="panel route-card">
     <div class="route-top">
-      <span class="lane-badge"><Icon name="mark" size={17} /></span>
+      <span class="lane-badge"><Icon name="mark" size={20} /></span>
       <div class="route-heading">
         <b>{routeTitle}</b>
         <span>{routeSub}</span>
@@ -128,7 +159,7 @@
       </div>
       <div class:live={lane.running} class="route-link"><span>PROCESS</span></div>
       <div class="route-node lane">
-        <span class="node-icon"><Icon name="mark" size={19} /></span>
+        <span class="node-icon"><Icon name="mark" size={28} /></span>
         <span class="node-copy">
           <small>02 · 本地入口</small>
           <b>Codex Lane</b>
@@ -203,7 +234,7 @@
       <div class="panel-head">
         <div>
           <h2 class="panel-title">吞吐与延迟</h2>
-          <p class="panel-sub">实时会话 · 仅记录元数据</p>
+          <p class="panel-sub">{rangeMinutes > 60 ? `历史 ${rangeMinutes / 60} 小时 · 按小时聚合` : "实时会话 · 仅记录元数据"}</p>
         </div>
         <div class="chart-numbers">
           <div class="chart-stat"><div class="k">下行</div><div class="v">{formatBytes(stats.bytesDown)}</div></div>
@@ -217,7 +248,7 @@
       </div>
       <ThroughputChart series={visibleSeries} />
       <div class="chart-footer">
-        <span>最近 {rangeMinutes} 分钟</span><span>·</span><span>按分钟聚合</span><span>·</span><span>仅域名、状态、耗时与流量</span>
+        <span>{rangeMinutes > 60 ? (historyLoading ? "历史加载中…" : `最近 ${rangeMinutes / 60} 小时`) : `最近 ${rangeMinutes} 分钟`}</span><span>·</span><span>{rangeMinutes > 60 ? "按小时聚合" : "按分钟聚合"}</span><span>·</span><span>仅域名、状态、耗时与流量</span>
         <span class="spacer"></span><b>无 MITM</b><span>·</span><span>不读取 HTTPS 内容</span>
       </div>
     </article>

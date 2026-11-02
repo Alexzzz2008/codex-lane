@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { RequestRecord, Snapshot } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
+  import { AppService } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/appservice";
   import Icon from "./Icon.svelte";
   import {
     compactHost,
@@ -28,6 +29,9 @@
   let paused = $state(false);
   let frozen = $state<RequestRecord[]>([]);
   let selectedId = $state("");
+  let harBusy = $state(false);
+  let harCopied = $state(false);
+  let commandCopied = $state(false);
 
   $effect(() => {
     if (!paused) frozen = snapshot.requests ?? [];
@@ -60,6 +64,29 @@
   function bytesLabel(request: RequestRecord): string {
     return formatBytes((request.bytesUp || 0) + (request.bytesDown || 0));
   }
+
+  async function exportHAR() {
+    harBusy = true;
+    try {
+      const har = await AppService.ExportHAR();
+      await navigator.clipboard.writeText(har);
+      harCopied = true;
+      window.setTimeout(() => (harCopied = false), 2000);
+    } finally {
+      harBusy = false;
+    }
+  }
+
+  function testCommand(request: RequestRecord): string {
+    const port = request.source === "kernel" ? snapshot.lane.kernelPort : snapshot.lane.interfacePort;
+    return `curl.exe -x http://127.0.0.1:${port} ${request.scheme || "https"}://${request.host}:${request.port}`;
+  }
+
+  async function copyTestCommand(request: RequestRecord) {
+    await navigator.clipboard.writeText(testCommand(request));
+    commandCopied = true;
+    window.setTimeout(() => (commandCopied = false), 2000);
+  }
 </script>
 
 <section class="view active" id="view-requests" aria-labelledby="requests-title">
@@ -76,6 +103,10 @@
       <button class="btn" onclick={onExport} disabled={busy === "export"}>
         <Icon name="copy" size={15} />
         复制报告
+      </button>
+      <button class="btn" onclick={exportHAR} disabled={harBusy} title="导出 HAR 到剪贴板">
+        {#if harBusy}<span class="spin"><Icon name="refresh" size={15} /></span>{:else}<Icon name="download" size={15} />{/if}
+        {harCopied ? "已复制" : "导出 HAR"}
       </button>
       <button class="btn" onclick={onClear} disabled={busy === "clear" || !frozen.length}>
         <Icon name="x" size={15} />
@@ -183,6 +214,12 @@
               <div class="chain-row"><i></i><span>Lane :{selected.source === "kernel" ? snapshot.lane.kernelPort : snapshot.lane.interfacePort}</span><span class="right">local</span></div>
               <div class="chain-row"><i></i><span>{selected.upstream || `${upstreamProtocol(snapshot.settings.protocol)} :${snapshot.settings.port}`}</span><span class="right">{formatDuration(selected.durationMs)}</span></div>
               <div class="chain-row"><i class:green={selected.result === "ok"}></i><span>{selected.host}</span><span class="right">{selected.result === "ok" ? "OK" : selected.error ? "ERROR" : selected.result}</span></div>
+            </div>
+            <div class="privacy-note" style="margin-top:10px">
+              <b>连通性验证</b>
+              <button class="btn small" style="margin-top:6px" onclick={() => void copyTestCommand(selected)}>
+                {#if commandCopied}<Icon name="check" size={12} />已复制{:else}<Icon name="copy" size={12} />复制测试命令{/if}
+              </button>
             </div>
           </div>
           <div class="detail-section">

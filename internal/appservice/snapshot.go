@@ -98,7 +98,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	}
 
 	upstream := cachedUpstream
-	if allowProbe && (deep || time.Since(lastProbe) > 30*time.Second) {
+	if allowProbe && (deep || (!lastProbe.IsZero() && time.Since(lastProbe) > 30*time.Second)) {
 		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 		upstream = s.probeUpstream(probeCtx, cfg)
 		cancel()

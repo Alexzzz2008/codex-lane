@@ -89,6 +89,10 @@ export function SelectFastestUpstream(): $CancellablePromise<model$0.Snapshot> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.SelectFastestUpstream");
 }
 
+export function SetLaunchAtLogin(enable: boolean): $CancellablePromise<void> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.SetLaunchAtLogin", enable);
+}
+
 export function StartLane(): $CancellablePromise<void> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.StartLane");
 }

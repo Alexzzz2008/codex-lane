@@ -37,21 +37,21 @@ type harRequest struct {
 }
 
 type harResponse struct {
-	Status       int    `json:"status"`
-	StatusText   string `json:"statusText"`
-	Redirection  bool   `json:"_redirection"`
-	Comment      string `json:"comment,omitempty"`
+	Status      int    `json:"status"`
+	StatusText  string `json:"statusText"`
+	Redirection bool   `json:"_redirection"`
+	Comment     string `json:"comment,omitempty"`
 }
 
 type harLaneInfo struct {
-	Source     string `json:"source,omitempty"`
-	Upstream   string `json:"upstream,omitempty"`
-	Process    string `json:"process,omitempty"`
-	Result     string `json:"result,omitempty"`
-	LatencyMs  int64  `json:"latencyMs,omitempty"`
-	BytesUp    int64  `json:"bytesUp,omitempty"`
-	BytesDown  int64  `json:"bytesDown,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Source    string `json:"source,omitempty"`
+	Upstream  string `json:"upstream,omitempty"`
+	Process   string `json:"process,omitempty"`
+	Result    string `json:"result,omitempty"`
+	LatencyMs int64  `json:"latencyMs,omitempty"`
+	BytesUp   int64  `json:"bytesUp,omitempty"`
+	BytesDown int64  `json:"bytesDown,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 func (s *AppService) ExportHAR() (string, error) {

@@ -25,22 +25,22 @@ import (
 type RecordEvent func(event string, record model.RequestRecord)
 
 type Server struct {
-	upstream     model.Upstream
-	dialer       *UpstreamDialer
-	routes       []model.RouteRule
-	allowedHosts []string
-	hostFilter   string
-	direct       *net.Dialer
+	upstream       model.Upstream
+	dialer         *UpstreamDialer
+	routes         []model.RouteRule
+	allowedHosts   []string
+	hostFilter     string
+	direct         *net.Dialer
 	resolveProcess func(localPort int) string
-	interfaceL   net.Listener
-	kernelL      net.Listener
-	interfaceS   *http.Server
-	kernelS      *http.Server
-	interfaceP   int
-	kernelP      int
-	onRecord     RecordEvent
-	startedAt    time.Time
-	closeOnce    sync.Once
+	interfaceL     net.Listener
+	kernelL        net.Listener
+	interfaceS     *http.Server
+	kernelS        *http.Server
+	interfaceP     int
+	kernelP        int
+	onRecord       RecordEvent
+	startedAt      time.Time
+	closeOnce      sync.Once
 }
 
 type Options struct {
@@ -67,19 +67,19 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 		return nil, fmt.Errorf("start Lane kernel listener: %w", err)
 	}
 	s := &Server{
-		upstream:     opts.Upstream,
-		dialer:       dialer,
-		routes:       opts.Routes,
-		allowedHosts: opts.AllowedHosts,
-		hostFilter:   opts.HostFilterMode,
+		upstream:       opts.Upstream,
+		dialer:         dialer,
+		routes:         opts.Routes,
+		allowedHosts:   opts.AllowedHosts,
+		hostFilter:     opts.HostFilterMode,
 		resolveProcess: opts.ResolveProcess,
-		direct:       &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second},
-		interfaceL: interfaceL,
-		kernelL:    kernelL,
-		interfaceP: portOf(interfaceL.Addr()),
-		kernelP:    portOf(kernelL.Addr()),
-		onRecord:   opts.OnRecord,
-		startedAt:  time.Now(),
+		direct:         &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second},
+		interfaceL:     interfaceL,
+		kernelL:        kernelL,
+		interfaceP:     portOf(interfaceL.Addr()),
+		kernelP:        portOf(kernelL.Addr()),
+		onRecord:       opts.OnRecord,
+		startedAt:      time.Now(),
 	}
 	s.interfaceS = &http.Server{
 		Handler:           s.handler(model.SourceInterface),

@@ -23,7 +23,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/preflight"
 )
 
-const Version = "0.1.20"
+const Version = "0.1.22"
 
 type Emitter func(name string, data ...any)
 

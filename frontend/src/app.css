@@ -111,7 +111,7 @@
       border-radius: 9px;
       box-shadow: 0 2px 5px rgba(22,22,28,.18);
     }
-    .brand-mark svg { width: 21px; height: 21px; }
+    .brand-mark svg { width: 25px; height: 25px; }
     .brand-name {
       font-size: 17px;
       line-height: 1;
@@ -373,7 +373,7 @@
       color: var(--mark);
       border: 1px solid #17171d;
     }
-    .lane-badge svg { width: 17px; height: 17px; }
+    .lane-badge svg { width: 20px; height: 20px; }
     .route-heading b { font-size: 13.5px; font-weight: 680; }
     .route-heading span { margin-left: 8px; color: var(--text-3); font-size: 11.5px; }
     .route-top .right { margin-left: auto; display: flex; align-items: center; gap: 11px; }
@@ -457,6 +457,7 @@
       color: var(--mark);
       box-shadow: 0 4px 11px rgba(21,21,29,.16);
     }
+    .route-node.lane .node-icon svg { width: 28px; height: 28px; }
     .route-node.destination {
       border-color: #dcefe3;
       background: linear-gradient(135deg, #fbfefc, #f3fbf6);
@@ -952,11 +953,11 @@
       align-items: center;
       justify-content: center;
       gap: 4px;
-      padding: 0 7px;
+      padding: 1px 7px 0;
       border-radius: 5px;
       font-family: var(--sans);
       font-size: 10.5px;
-      line-height: 1;
+      line-height: 1.2;
       font-weight: 620;
       letter-spacing: 0;
       white-space: nowrap;
@@ -1422,8 +1423,8 @@
       color: var(--mark);
       box-shadow: 0 2px 6px rgba(22,22,28,.16);
     }
-    .about-project b { display: block; font-size: 13px; line-height: 1.2; font-weight: 670; }
-    .about-project span { display: block; margin-top: 3px; color: var(--text-3); font-size: 10.5px; }
+    .about-project > div b { display: block; font-size: 13px; line-height: 1.2; font-weight: 670; }
+    .about-project > div span { display: block; margin-top: 3px; color: var(--text-3); font-size: 10.5px; }
     .about-link {
       width: 100%;
       min-height: 50px;
@@ -1785,7 +1786,7 @@
     .test-group-head span, .test-row .test-name span, .test-row .latency { font-size: var(--fs-xs); }
     .test-row .code { font-size: var(--fs-micro); }
     .test-row .test-name b { font-size: var(--fs-md); }
-    .result-pill { min-height: 23px; padding: 0 8px; border: 1px solid transparent; font-size: var(--fs-xs); font-weight: 620; }
+    .result-pill { min-height: 23px; padding: 1px 8px 0; border: 1px solid transparent; font-size: var(--fs-xs); font-weight: 620; }
     .result-pill.pass { border-color: var(--green-line); }
     .result-pill.warn { border-color: var(--orange-line); }
     .result-pill.fail { border-color: #f1cccc; }

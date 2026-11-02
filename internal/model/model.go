@@ -28,13 +28,13 @@ type Upstream struct {
 }
 
 type Lane struct {
-	ListenHost     string       `json:"listenHost"`
-	ListenPort     int          `json:"listenPort"`
-	InterfacePort  int          `json:"interfacePort"`
-	KernelPort     int          `json:"kernelPort"`
-	HostFilterMode string       `json:"hostFilterMode"`
-	AllowedHosts   []string     `json:"allowedHosts"`
-	Routes         []RouteRule  `json:"routes"`
+	ListenHost     string      `json:"listenHost"`
+	ListenPort     int         `json:"listenPort"`
+	InterfacePort  int         `json:"interfacePort"`
+	KernelPort     int         `json:"kernelPort"`
+	HostFilterMode string      `json:"hostFilterMode"`
+	AllowedHosts   []string    `json:"allowedHosts"`
+	Routes         []RouteRule `json:"routes"`
 }
 
 type RouteRule struct {

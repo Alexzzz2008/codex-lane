@@ -362,6 +362,33 @@
     }
   }
 
+  async function switchUpstream(name: string) {
+    busy = "switch";
+    try {
+      snapshot = await AppService.SwitchUpstream(name);
+      notify("ok", "已切换上游档案", name);
+    } catch (error) {
+      notify("error", "切换失败", errorText(error));
+    } finally {
+      busy = "";
+    }
+  }
+
+  async function selectFastestUpstream(): Promise<boolean> {
+    busy = "switch";
+    try {
+      snapshot = await AppService.SelectFastestUpstream();
+      const active = snapshot.settings.activeUpstream;
+      notify("ok", "已选择最快上游", active || "");
+      return true;
+    } catch (error) {
+      notify("error", "测速选优失败", errorText(error));
+      return false;
+    } finally {
+      busy = "";
+    }
+  }
+
   function upsertRequest(request: RequestRecord) {
     if (!snapshot) return;
     const rows = snapshot.requests ?? [];
@@ -374,9 +401,9 @@
 
   onMount(() => {
     activePage = (location.hash.slice(1) as Page) in titles ? (location.hash.slice(1) as Page) : "overview";
-    load(true).then(() => {
-      void checkForUpdates(true);
-    });
+    load(false)
+      .then(() => load(true))
+      .then(() => checkForUpdates(true));
 
     const offRequest = Events.On("lane:request", (event: { data: { event: string; request: RequestRecord } }) => {
       const payload = event?.data;
@@ -433,7 +460,7 @@
   <div class="window">
     <header class="appbar">
       <a class="brand" href="#overview" aria-label="Codex Lane 首页" onclick={(event) => { event.preventDefault(); navigate("overview"); }}>
-        <span class="brand-mark"><Icon name="mark" size={21} /></span>
+        <span class="brand-mark"><Icon name="mark" size={25} /></span>
         <span class="brand-name">Codex <span>Lane</span></span>
         <span class="brand-edition">LOCAL</span>
       </a>
@@ -485,6 +512,8 @@
           onCheckUpdate={checkForUpdates}
           onOpenProject={openProjectPage}
           onOpenConfigFolder={openConfigFolder}
+          onSwitchUpstream={switchUpstream}
+          onSelectFastest={selectFastestUpstream}
         />
       {/if}
     </main>

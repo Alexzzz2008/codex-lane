@@ -133,8 +133,6 @@ func installSystemTray(app *application.App, window *application.WebviewWindow, 
 	})
 	menu.Add("打开 Codex").OnClick(func(*application.Context) {
 		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-			defer cancel()
 			_, _ = service.LaunchCodex(model.LaunchOptions{})
 		}()
 	})
