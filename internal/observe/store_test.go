@@ -9,6 +9,7 @@ import (
 
 func TestStatsUseConnectLatencyForLongTunnels(t *testing.T) {
 	store := NewStore(1000, t.TempDir(), nil)
+	t.Cleanup(store.Close)
 	store.Add(model.RequestRecord{ID: "a", LatencyMs: 90, DurationMs: 41000})
 	store.Finish(model.RequestRecord{ID: "a", LatencyMs: 90, DurationMs: 41000, Result: "ok"})
 	store.Add(model.RequestRecord{ID: "b", LatencyMs: 120, DurationMs: 38000})
@@ -31,6 +32,7 @@ func TestStatsUseConnectLatencyForLongTunnels(t *testing.T) {
 
 func TestSeriesKeepsRollingHourAfterLongRuntime(t *testing.T) {
 	store := NewStore(1000, t.TempDir(), nil)
+	t.Cleanup(store.Close)
 	store.mu.Lock()
 	for index := range store.buckets {
 		store.buckets[index] = bucket{start: time.Now().Add(-3 * time.Hour)}

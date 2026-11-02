@@ -6,18 +6,30 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 )
 
+const maxLogSize = 32 << 20
+
 type Store struct {
-	mu        sync.RWMutex
-	records   []model.RequestRecord
-	byID      map[string]int
-	maxRows   int
-	logPath   string
+	mu      sync.RWMutex
+	records []model.RequestRecord
+	start   int
+	count   int
+	byID    map[string]int
+	maxRows int
+
+	logMu   sync.Mutex
+	logDir  string
+	logPath string
+	logFile *os.File
+	logDate string
+	logSize int64
+
 	notify    func(event string, record model.RequestRecord)
 	total     int64
 	success   int64
@@ -25,6 +37,10 @@ type Store struct {
 	bytesUp   int64
 	bytesDown int64
 	buckets   [60]bucket
+
+	latencies []int64
+	latSorted []int64
+	latDirty  bool
 }
 
 type bucket struct {
@@ -44,10 +60,11 @@ func NewStore(maxRows int, logDir string, notify func(event string, record model
 		maxRows: maxRows,
 		notify:  notify,
 		byID:    make(map[string]int),
+		records: make([]model.RequestRecord, maxRows),
+		logDir:  logDir,
 	}
 	if logDir != "" {
 		_ = os.MkdirAll(logDir, 0o700)
-		s.logPath = filepath.Join(logDir, "requests-"+time.Now().Format("20060102")+".jsonl")
 	}
 	return s
 }
@@ -60,16 +77,16 @@ func (s *Store) Add(record model.RequestRecord) {
 		record.Time = time.Now().Format("15:04:05.000")
 	}
 	s.mu.Lock()
-	if len(s.records) >= s.maxRows {
-		copy(s.records, s.records[len(s.records)-s.maxRows+1:])
-		s.records = s.records[:s.maxRows-1]
-		s.byID = make(map[string]int, len(s.records))
-		for i := range s.records {
-			s.byID[s.records[i].ID] = i
-		}
+	if s.count == s.maxRows {
+		oldest := s.records[s.start%s.maxRows]
+		delete(s.byID, oldest.ID)
+		s.start++
+		s.count--
 	}
-	s.byID[record.ID] = len(s.records)
-	s.records = append(s.records, record)
+	position := (s.start + s.count) % s.maxRows
+	s.records[position] = record
+	s.byID[record.ID] = s.start + s.count
+	s.count++
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify("request:new", record)
@@ -78,8 +95,8 @@ func (s *Store) Add(record model.RequestRecord) {
 
 func (s *Store) Touch(record model.RequestRecord) {
 	s.mu.Lock()
-	if idx, ok := s.byID[record.ID]; ok && idx >= 0 && idx < len(s.records) {
-		s.records[idx] = record
+	if idx, ok := s.byID[record.ID]; ok {
+		s.records[idx%s.maxRows] = record
 	}
 	s.mu.Unlock()
 	if s.notify != nil {
@@ -89,9 +106,8 @@ func (s *Store) Touch(record model.RequestRecord) {
 
 func (s *Store) Finish(record model.RequestRecord) {
 	s.mu.Lock()
-	idx, ok := s.byID[record.ID]
-	if ok && idx >= 0 && idx < len(s.records) {
-		s.records[idx] = record
+	if idx, ok := s.byID[record.ID]; ok {
+		s.records[idx%s.maxRows] = record
 	}
 	s.total++
 	if record.Result == "ok" || (record.Status >= 200 && record.Status < 400) {
@@ -106,8 +122,15 @@ func (s *Store) Finish(record model.RequestRecord) {
 	b.down += record.BytesDown
 	b.lat += recordLatency(record)
 	b.count++
+	if latency := recordLatency(record); latency > 0 {
+		s.latencies = append(s.latencies, latency)
+		if len(s.latencies) > s.maxRows {
+			s.latencies = s.latencies[1:]
+		}
+		s.latDirty = true
+	}
 	s.mu.Unlock()
-	if s.logPath != "" {
+	if s.logDir != "" {
 		s.append(record)
 	}
 	if s.notify != nil {
@@ -132,34 +155,115 @@ func (s *Store) append(record model.RequestRecord) {
 	if err != nil {
 		return
 	}
-	f, err := os.OpenFile(s.logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
+	data = append(data, '\n')
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if err := s.ensureLogFileLocked(); err != nil {
 		return
 	}
-	_, _ = f.Write(append(data, '\n'))
-	_ = f.Close()
+	if s.logSize > 0 && s.logSize+int64(len(data)) > maxLogSize {
+		s.rotateLogFileLocked()
+	}
+	written, err := s.logFile.Write(data)
+	if err == nil {
+		s.logSize += int64(written)
+	}
+}
+
+func (s *Store) ensureLogFileLocked() error {
+	today := time.Now().Format("20060102")
+	if s.logFile != nil && s.logDate == today {
+		return nil
+	}
+	if s.logFile != nil {
+		_ = s.logFile.Close()
+		s.logFile = nil
+	}
+	if err := os.MkdirAll(s.logDir, 0o700); err != nil {
+		return err
+	}
+	path := filepath.Join(s.logDir, "requests-"+today+".jsonl")
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	size := int64(0)
+	if info, err := file.Stat(); err == nil {
+		size = info.Size()
+	}
+	s.logFile = file
+	s.logDate = today
+	s.logPath = path
+	s.logSize = size
+	return nil
+}
+
+func (s *Store) rotateLogFileLocked() {
+	_ = s.logFile.Close()
+	s.logFile = nil
+	rotated := s.logPath + ".1"
+	_ = os.Remove(rotated)
+	_ = os.Rename(s.logPath, rotated)
+	s.logSize = 0
+}
+
+func (s *Store) RemoveExpired(days int) int {
+	if days <= 0 || s.logDir == "" {
+		return 0
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	entries, err := os.ReadDir(s.logDir)
+	if err != nil {
+		return 0
+	}
+	s.logMu.Lock()
+	current := filepath.Base(s.logPath)
+	s.logMu.Unlock()
+	removed := 0
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.IsDir() || !strings.HasPrefix(name, "requests-") || !strings.Contains(name, ".jsonl") {
+			continue
+		}
+		if name == current {
+			continue
+		}
+		info, err := entry.Info()
+		if err != nil || !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if os.Remove(filepath.Join(s.logDir, name)) == nil {
+			removed++
+		}
+	}
+	return removed
+}
+
+func (s *Store) Close() {
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if s.logFile != nil {
+		_ = s.logFile.Close()
+		s.logFile = nil
+	}
 }
 
 func (s *Store) List(limit int) []model.RequestRecord {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	if limit <= 0 || limit > len(s.records) {
-		limit = len(s.records)
+	if limit <= 0 || limit > s.count {
+		limit = s.count
 	}
 	out := make([]model.RequestRecord, limit)
-	start := len(s.records) - limit
-	for i := 0; i < limit; i++ {
-		out[i] = s.records[start+i]
-	}
-	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
-		out[i], out[j] = out[j], out[i]
+	for index := 0; index < limit; index++ {
+		absolute := s.start + s.count - 1 - index
+		out[index] = s.records[absolute%s.maxRows]
 	}
 	return out
 }
 
 func (s *Store) Stats() model.RequestStats {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	stats := model.RequestStats{
 		Total:     s.total,
 		Success:   s.success,
@@ -170,16 +274,18 @@ func (s *Store) Stats() model.RequestStats {
 	if stats.Total > 0 {
 		stats.SuccessRate = float64(stats.Success) / float64(stats.Total) * 100
 	}
-	latencies := make([]int64, 0, len(s.records))
-	for _, record := range s.records {
-		if value := recordLatency(record); value > 0 {
-			latencies = append(latencies, value)
-		}
+	if s.latDirty || s.latSorted == nil {
+		sorted := make([]int64, len(s.latencies))
+		copy(sorted, s.latencies)
+		sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+		s.latSorted = sorted
+		s.latDirty = false
 	}
-	sort.Slice(latencies, func(i, j int) bool { return latencies[i] < latencies[j] })
-	if len(latencies) > 0 {
-		stats.MedianMs = percentile(latencies, 0.5)
-		stats.P95Ms = percentile(latencies, 0.95)
+	sorted := s.latSorted
+	s.mu.RUnlock()
+	if len(sorted) > 0 {
+		stats.MedianMs = percentile(sorted, 0.5)
+		stats.P95Ms = percentile(sorted, 0.95)
 	}
 	return stats
 }
@@ -213,8 +319,12 @@ func (s *Store) Series() []model.RequestSeriesPoint {
 
 func (s *Store) Clear() {
 	s.mu.Lock()
-	s.records = nil
+	s.start = 0
+	s.count = 0
 	s.byID = make(map[string]int)
+	s.latencies = nil
+	s.latSorted = nil
+	s.latDirty = false
 	s.total = 0
 	s.success = 0
 	s.failed = 0

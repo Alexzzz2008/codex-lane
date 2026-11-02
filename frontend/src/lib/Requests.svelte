@@ -117,7 +117,13 @@
       <div class="request-table-wrap">
         <table aria-label="请求日志列表">
           <colgroup>
-            <col style="width:74px" /><col /><col style="width:105px" /><col style="width:82px" /><col style="width:68px" /><col style="width:74px" /><col style="width:72px" />
+            <col class="col-time" />
+            <col class="col-target" />
+            <col class="col-source" />
+            <col class="col-protocol" />
+            <col class="col-result" />
+            <col class="col-traffic" />
+            <col class="col-duration" />
           </colgroup>
           <thead>
             <tr><th>时间</th><th>请求目标</th><th>来源</th><th>协议</th><th>结果</th><th>流量</th><th>耗时</th></tr>
@@ -200,6 +206,13 @@
 </section>
 
 <style>
+  .col-time { width: 112px; }
+  .col-target { width: auto; }
+  .col-source { width: 132px; }
+  .col-protocol { width: 92px; }
+  .col-result { width: 82px; }
+  .col-traffic { width: 86px; }
+  .col-duration { width: 76px; }
   .request-table-wrap { overflow: auto; }
   .request-table-wrap thead { position: sticky; top: 0; z-index: 2; }
   .request-foot { min-height: 38px; display: flex; align-items: center; gap: 6px; padding: 0 13px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11.5px; background: #fbfbfc; }

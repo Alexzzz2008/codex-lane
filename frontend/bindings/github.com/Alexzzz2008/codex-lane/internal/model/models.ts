@@ -73,6 +73,14 @@ export interface Event {
     "detail": string;
 }
 
+export interface HistoryPoint {
+    "time": string;
+    "bytesUp": number;
+    "bytesDown": number;
+    "requests": number;
+    "latencyMs": number;
+}
+
 export interface LaneStatus {
     "running": boolean;
     "interfaceUrl": string;
@@ -119,6 +127,7 @@ export interface RequestRecord {
     "latencyMs": number;
     "durationMs": number;
     "upstream": string;
+    "process": string;
     "bytesUp": number;
     "bytesDown": number;
     "error": string;
@@ -153,6 +162,11 @@ export interface ResolvedEngine {
     "error": string;
 }
 
+export interface RouteRule {
+    "pattern": string;
+    "action": string;
+}
+
 export interface Settings {
     "protocol": string;
     "host": string;
@@ -164,6 +178,14 @@ export interface Settings {
     "stopCodexOnExit": boolean;
     "retentionDays": number;
     "maxMemoryRows": number;
+    "upstreams": UpstreamProfile[] | null;
+    "activeUpstream": string;
+    "autoFailover": boolean;
+    "hostFilterMode": string;
+    "allowedHosts": string[] | null;
+    "routes": RouteRule[] | null;
+    "minimizeToTray": boolean;
+    "launchAtLogin": boolean;
 }
 
 export interface SettingsInput {
@@ -177,6 +199,14 @@ export interface SettingsInput {
     "stopCodexOnExit": boolean;
     "retentionDays": number;
     "maxMemoryRows": number;
+    "upstreams": UpstreamProfile[] | null;
+    "activeUpstream": string;
+    "autoFailover": boolean;
+    "hostFilterMode": string;
+    "allowedHosts": string[] | null;
+    "routes": RouteRule[] | null;
+    "minimizeToTray": boolean;
+    "launchAtLogin": boolean;
 }
 
 export interface Snapshot {
@@ -228,6 +258,23 @@ export interface UpdateStatus {
     "publishedAt": string;
     "checkedAt": string;
     "error": string;
+}
+
+export interface UpstreamProbeResult {
+    "name": string;
+    "protocol": string;
+    "host": string;
+    "port": number;
+    "reachable": boolean;
+    "latencyMs": number;
+    "error": string;
+}
+
+export interface UpstreamProfile {
+    "name": string;
+    "protocol": string;
+    "host": string;
+    "port": number;
 }
 
 export interface UpstreamStatus {

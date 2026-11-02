@@ -21,6 +21,10 @@ export function ClearRequests(): $CancellablePromise<model$0.Snapshot> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ClearRequests");
 }
 
+export function ExportHAR(): $CancellablePromise<string> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ExportHAR");
+}
+
 export function ExportReport(): $CancellablePromise<string> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ExportReport");
 }
@@ -31,6 +35,10 @@ export function GetDependencies(): $CancellablePromise<model$0.Dependency[] | nu
 
 export function GetState(): $CancellablePromise<model$0.Snapshot> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.GetState");
+}
+
+export function History(hours: number): $CancellablePromise<model$0.HistoryPoint[] | null> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.History", hours);
 }
 
 export function InstallDependency(id: string): $CancellablePromise<string> {
@@ -53,6 +61,10 @@ export function OpenProjectPage(target: string): $CancellablePromise<void> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.OpenProjectPage", target);
 }
 
+export function ProbeAllUpstreams(): $CancellablePromise<model$0.UpstreamProbeResult[] | null> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ProbeAllUpstreams");
+}
+
 export function ProbeProxy(): $CancellablePromise<model$0.UpstreamStatus> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ProbeProxy");
 }
@@ -73,6 +85,10 @@ export function SaveSettings(input: model$0.SettingsInput): $CancellablePromise<
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.SaveSettings", input);
 }
 
+export function SelectFastestUpstream(): $CancellablePromise<model$0.Snapshot> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.SelectFastestUpstream");
+}
+
 export function StartLane(): $CancellablePromise<void> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.StartLane");
 }
@@ -83,4 +99,8 @@ export function StopCodex(): $CancellablePromise<model$0.Snapshot> {
 
 export function StopLane(): $CancellablePromise<void> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.StopLane");
+}
+
+export function SwitchUpstream(name: string): $CancellablePromise<model$0.Snapshot> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.SwitchUpstream", name);
 }

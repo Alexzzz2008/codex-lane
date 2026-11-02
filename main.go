@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/appservice"
+	"github.com/Alexzzz2008/codex-lane/internal/config"
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 	"github.com/Alexzzz2008/codex-lane/internal/platform"
 	"github.com/wailsapp/wails/v3/pkg/application"
@@ -19,6 +20,9 @@ import (
 
 //go:embed all:frontend/dist
 var assets embed.FS
+
+//go:embed design/icon/appicon.png
+var trayIcon []byte
 
 func main() {
 	if commandLineRequested(os.Args[1:]) {
@@ -40,6 +44,7 @@ func main() {
 		os.Exit(1)
 	}
 
+	minimizeToTray := loadMinimizeToTray()
 	service := appservice.New()
 	var window *application.WebviewWindow
 	app := application.New(application.Options{
@@ -77,7 +82,17 @@ func main() {
 		Hidden:           true,
 		BackgroundColour: application.NewRGB(244, 244, 246),
 		URL:              "/",
+		Windows: application.WindowsWindow{
+			EventMapping: windowEventMapping(minimizeToTray),
+		},
 	})
+
+	if minimizeToTray {
+		window.OnWindowEvent(events.Windows.WindowClosing, func(*application.WindowEvent) {
+			window.Hide()
+		})
+	}
+	installSystemTray(app, window, service, minimizeToTray)
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		fitWindow(app, window)
@@ -86,6 +101,54 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func loadMinimizeToTray() bool {
+	paths, err := platform.ResolvePaths()
+	if err != nil {
+		return true
+	}
+	cfg, err := config.Load(paths.ConfigPath)
+	if err != nil {
+		return true
+	}
+	return cfg.Startup.MinimizeToTray
+}
+
+func windowEventMapping(minimizeToTray bool) map[events.WindowEventType]events.WindowEventType {
+	if !minimizeToTray {
+		return nil
+	}
+	return map[events.WindowEventType]events.WindowEventType{}
+}
+
+func installSystemTray(app *application.App, window *application.WebviewWindow, service *appservice.AppService, minimizeToTray bool) {
+	tray := app.SystemTray.New()
+	tray.SetIcon(trayIcon)
+	tray.SetTooltip("Codex Lane")
+	menu := application.NewMenu()
+	menu.Add("打开主窗口").OnClick(func(*application.Context) {
+		window.Show()
+		window.Focus()
+	})
+	menu.Add("打开 Codex").OnClick(func(*application.Context) {
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+			defer cancel()
+			_, _ = service.LaunchCodex(model.LaunchOptions{})
+		}()
+	})
+	menu.Add("停止通道").OnClick(func(*application.Context) {
+		go service.StopLane()
+	})
+	if minimizeToTray {
+		menu.AddSeparator()
+		menu.Add("退出 Codex Lane").OnClick(func(*application.Context) {
+			app.Quit()
+		})
+	}
+	tray.SetMenu(menu)
+	tray.Show()
 }
 
 func fitWindow(app *application.App, window *application.WebviewWindow) {

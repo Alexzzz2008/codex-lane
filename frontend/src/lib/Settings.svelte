@@ -34,6 +34,14 @@
     stopCodexOnExit: false,
     retentionDays: 14,
     maxMemoryRows: 10000,
+    upstreams: [],
+    activeUpstream: "",
+    autoFailover: false,
+    hostFilterMode: "off",
+    allowedHosts: [],
+    routes: [],
+    minimizeToTray: true,
+    launchAtLogin: false,
   };
 
   function fromSnapshot(value: Snapshot): SettingsInput {
@@ -48,6 +56,14 @@
       stopCodexOnExit: value.settings.stopCodexOnExit,
       retentionDays: value.settings.retentionDays,
       maxMemoryRows: value.settings.maxMemoryRows,
+      upstreams: value.settings.upstreams ?? [],
+      activeUpstream: value.settings.activeUpstream,
+      autoFailover: value.settings.autoFailover,
+      hostFilterMode: value.settings.hostFilterMode,
+      allowedHosts: value.settings.allowedHosts ?? [],
+      routes: value.settings.routes ?? [],
+      minimizeToTray: value.settings.minimizeToTray,
+      launchAtLogin: value.settings.launchAtLogin,
     };
   }
 

@@ -100,7 +100,7 @@
 
   <article class="panel route-card">
     <div class="route-top">
-      <span class="lane-badge"><Icon name="lane" size={17} /></span>
+      <span class="lane-badge"><Icon name="mark" size={17} /></span>
       <div class="route-heading">
         <b>{routeTitle}</b>
         <span>{routeSub}</span>
@@ -128,7 +128,7 @@
       </div>
       <div class:live={lane.running} class="route-link"><span>PROCESS</span></div>
       <div class="route-node lane">
-        <span class="node-icon"><Icon name="lane" size={19} /></span>
+        <span class="node-icon"><Icon name="mark" size={19} /></span>
         <span class="node-copy">
           <small>02 · 本地入口</small>
           <b>Codex Lane</b>

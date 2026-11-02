@@ -13,6 +13,7 @@
       --accent-strong: #4638c7;
       --accent-soft: #efedff;
       --accent-line: #d8d2ff;
+      --mark: #8b7bf7;
       --green: #148b52;
       --green-soft: #eaf7ef;
       --green-line: #cbe9d6;
@@ -105,8 +106,8 @@
       flex: none;
       display: grid;
       place-items: center;
-      color: var(--accent);
-      background: #202124;
+      color: var(--mark);
+      background: #17171d;
       border-radius: 9px;
       box-shadow: 0 2px 5px rgba(22,22,28,.18);
     }
@@ -368,9 +369,9 @@
       display: grid;
       place-items: center;
       border-radius: 8px;
-      background: var(--accent-soft);
-      color: var(--accent);
-      border: 1px solid var(--accent-line);
+      background: #17171d;
+      color: var(--mark);
+      border: 1px solid #17171d;
     }
     .lane-badge svg { width: 17px; height: 17px; }
     .route-heading b { font-size: 13.5px; font-weight: 680; }
@@ -451,9 +452,9 @@
       box-shadow: 0 0 0 1px rgba(86,72,216,.025) inset;
     }
     .route-node.lane .node-icon {
-      background: #202124;
-      border-color: #202124;
-      color: #a99fff;
+      background: #17171d;
+      border-color: #17171d;
+      color: var(--mark);
       box-shadow: 0 4px 11px rgba(21,21,29,.16);
     }
     .route-node.destination {
@@ -1417,8 +1418,8 @@
       display: grid;
       place-items: center;
       border-radius: 9px;
-      background: #202124;
-      color: var(--accent);
+      background: #17171d;
+      color: var(--mark);
       box-shadow: 0 2px 6px rgba(22,22,28,.16);
     }
     .about-project b { display: block; font-size: 13px; line-height: 1.2; font-weight: 670; }

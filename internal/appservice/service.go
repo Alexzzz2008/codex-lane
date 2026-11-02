@@ -23,7 +23,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/preflight"
 )
 
-const Version = "0.1.16"
+const Version = "0.1.20"
 
 type Emitter func(name string, data ...any)
 
@@ -101,6 +101,7 @@ func (s *AppService) startup(ctx context.Context) error {
 		s.addEvent("ok", "本地网关已就绪", "Codex 与内核将使用独立双入口")
 	}
 	s.Refresh()
+	s.startMonitor()
 	if cfg.Startup.OpenCodex {
 		_, _ = s.LaunchCodex(model.LaunchOptions{})
 	}
@@ -109,6 +110,12 @@ func (s *AppService) startup(ctx context.Context) error {
 
 func (s *AppService) ServiceShutdown() error {
 	s.StopLane()
+	s.mu.RLock()
+	store := s.store
+	s.mu.RUnlock()
+	if store != nil {
+		store.Close()
+	}
 	s.mu.RLock()
 	stopCodex := s.cfg.Startup.StopCodexOnExit
 	installPath := s.cachedCodex.InstallLocation
@@ -165,6 +172,10 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	codexConfig := filepath.Join(s.paths.CodexHome, "config.toml")
 	previousEngine := s.cfg.Engine
 	previousDistro := s.cfg.WSLDistro
+	previousRoutes := s.cfg.Lane.Routes
+	previousAllowed := s.cfg.Lane.AllowedHosts
+	previousFilter := s.cfg.Lane.HostFilterMode
+	previousAutoStart := platform.IsAutoStart()
 	s.mu.Unlock()
 
 	if err := config.ApplySettings(&cfg, input); err != nil {
@@ -190,8 +201,16 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	s.mu.Lock()
 	s.cfg = cfg
 	s.mu.Unlock()
+	if input.LaunchAtLogin != previousAutoStart {
+		if err := platform.SetAutoStart(input.LaunchAtLogin); err != nil {
+			s.addEvent("error", "开机自启设置失败", err.Error())
+		}
+	}
 	newUpstream := config.UpstreamURL(cfg.Upstream)
-	if oldUpstream != newUpstream {
+	laneRulesChanged := !sameRoutes(previousRoutes, cfg.Lane.Routes) ||
+		!sameStrings(previousAllowed, cfg.Lane.AllowedHosts) ||
+		previousFilter != cfg.Lane.HostFilterMode
+	if oldUpstream != newUpstream || laneRulesChanged {
 		if err := s.restartLane(); err != nil {
 			s.addEvent("error", "网关重启失败", err.Error())
 		} else {
@@ -203,6 +222,30 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	defer refreshCancel()
 	engineChanged := previousEngine != cfg.Engine || previousDistro != cfg.WSLDistro
 	return s.snapshotWith(refreshCtx, engineChanged, false), nil
+}
+
+func sameRoutes(a, b []model.RouteRule) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
+}
+
+func sameStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for index := range a {
+		if a[index] != b[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *AppService) StartLane() error {
@@ -237,7 +280,16 @@ func (s *AppService) startLane(cfg model.Config) error {
 		}
 	}
 	ctx, cancel := context.WithCancel(s.ctx)
-	lane, err := gateway.Start(ctx, cfg.Upstream, cfg.Lane.ListenHost, cfg.Lane.InterfacePort, cfg.Lane.KernelPort, s.handleGatewayEvent)
+	lane, err := gateway.Start(ctx, gateway.Options{
+		Upstream:            cfg.Upstream,
+		Host:                cfg.Lane.ListenHost,
+		PreferredPort:       cfg.Lane.InterfacePort,
+		PreferredKernelPort: cfg.Lane.KernelPort,
+		Routes:              cfg.Lane.Routes,
+		AllowedHosts:        cfg.Lane.AllowedHosts,
+		HostFilterMode:      cfg.Lane.HostFilterMode,
+		OnRecord:            s.handleGatewayEvent,
+	})
 	if err != nil {
 		cancel()
 		return err
@@ -488,6 +540,10 @@ func (s *AppService) OpenProjectPage(target string) error {
 	default:
 		return errors.New("unsupported project page")
 	}
+}
+
+func (s *AppService) SetLaunchAtLogin(enable bool) error {
+	return platform.SetAutoStart(enable)
 }
 
 func (s *AppService) currentConfig() model.Config {

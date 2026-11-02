@@ -12,6 +12,12 @@ const (
 	SourceInterface = "interface"
 	SourceKernel    = "kernel"
 	SourceSelfTest  = "self-test"
+
+	HostFilterOff       = "off"
+	HostFilterAllowlist = "allowlist"
+
+	RouteProxy  = "proxy"
+	RouteDirect = "direct"
 )
 
 type Upstream struct {
@@ -22,15 +28,31 @@ type Upstream struct {
 }
 
 type Lane struct {
-	ListenHost    string `json:"listenHost"`
-	ListenPort    int    `json:"listenPort"`
-	InterfacePort int    `json:"interfacePort"`
-	KernelPort    int    `json:"kernelPort"`
+	ListenHost     string       `json:"listenHost"`
+	ListenPort     int          `json:"listenPort"`
+	InterfacePort  int          `json:"interfacePort"`
+	KernelPort     int          `json:"kernelPort"`
+	HostFilterMode string       `json:"hostFilterMode"`
+	AllowedHosts   []string     `json:"allowedHosts"`
+	Routes         []RouteRule  `json:"routes"`
+}
+
+type RouteRule struct {
+	Pattern string `json:"pattern"`
+	Action  string `json:"action"`
+}
+
+type UpstreamProfile struct {
+	Name     string `json:"name"`
+	Protocol string `json:"protocol"`
+	Host     string `json:"host"`
+	Port     int    `json:"port"`
 }
 
 type Startup struct {
 	OpenCodex       bool `json:"openCodex"`
 	StopCodexOnExit bool `json:"stopCodexOnExit"`
+	MinimizeToTray  bool `json:"minimizeToTray"`
 }
 
 type Logging struct {
@@ -40,28 +62,39 @@ type Logging struct {
 }
 
 type Config struct {
-	SchemaVersion       int      `json:"schemaVersion"`
-	Upstream            Upstream `json:"upstreamProxy"`
-	Lane                Lane     `json:"lane"`
-	Engine              string   `json:"engine"`
-	WSLDistro           string   `json:"wslDistro"`
-	AskBeforeKill       bool     `json:"askBeforeKill"`
-	RequireHealthyProxy bool     `json:"requireHealthyProxy"`
-	Startup             Startup  `json:"startup"`
-	Logging             Logging  `json:"logging"`
+	SchemaVersion       int               `json:"schemaVersion"`
+	Upstream            Upstream          `json:"upstreamProxy"`
+	Upstreams           []UpstreamProfile `json:"upstreams"`
+	ActiveUpstream      string            `json:"activeUpstream"`
+	AutoFailover        bool              `json:"autoFailover"`
+	Lane                Lane              `json:"lane"`
+	Engine              string            `json:"engine"`
+	WSLDistro           string            `json:"wslDistro"`
+	AskBeforeKill       bool              `json:"askBeforeKill"`
+	RequireHealthyProxy bool              `json:"requireHealthyProxy"`
+	Startup             Startup           `json:"startup"`
+	Logging             Logging           `json:"logging"`
 }
 
 type Settings struct {
-	Protocol        string `json:"protocol"`
-	Host            string `json:"host"`
-	Port            int    `json:"port"`
-	NoProxy         string `json:"noProxy"`
-	Engine          string `json:"engine"`
-	WSLDistro       string `json:"wslDistro"`
-	OpenCodex       bool   `json:"openCodex"`
-	StopCodexOnExit bool   `json:"stopCodexOnExit"`
-	RetentionDays   int    `json:"retentionDays"`
-	MaxMemoryRows   int    `json:"maxMemoryRows"`
+	Protocol        string            `json:"protocol"`
+	Host            string            `json:"host"`
+	Port            int               `json:"port"`
+	NoProxy         string            `json:"noProxy"`
+	Engine          string            `json:"engine"`
+	WSLDistro       string            `json:"wslDistro"`
+	OpenCodex       bool              `json:"openCodex"`
+	StopCodexOnExit bool              `json:"stopCodexOnExit"`
+	RetentionDays   int               `json:"retentionDays"`
+	MaxMemoryRows   int               `json:"maxMemoryRows"`
+	Upstreams       []UpstreamProfile `json:"upstreams"`
+	ActiveUpstream  string            `json:"activeUpstream"`
+	AutoFailover    bool              `json:"autoFailover"`
+	HostFilterMode  string            `json:"hostFilterMode"`
+	AllowedHosts    []string          `json:"allowedHosts"`
+	Routes          []RouteRule       `json:"routes"`
+	MinimizeToTray  bool              `json:"minimizeToTray"`
+	LaunchAtLogin   bool              `json:"launchAtLogin"`
 }
 
 type LaneStatus struct {
@@ -167,6 +200,7 @@ type RequestRecord struct {
 	LatencyMs  int64  `json:"latencyMs"`
 	DurationMs int64  `json:"durationMs"`
 	Upstream   string `json:"upstream"`
+	Process    string `json:"process"`
 	BytesUp    int64  `json:"bytesUp"`
 	BytesDown  int64  `json:"bytesDown"`
 	Error      string `json:"error"`
@@ -189,6 +223,24 @@ type RequestSeriesPoint struct {
 	Time      string `json:"time"`
 	BytesDown int64  `json:"bytesDown"`
 	LatencyMs int64  `json:"latencyMs"`
+}
+
+type HistoryPoint struct {
+	Time      string `json:"time"`
+	BytesUp   int64  `json:"bytesUp"`
+	BytesDown int64  `json:"bytesDown"`
+	Requests  int64  `json:"requests"`
+	LatencyMs int64  `json:"latencyMs"`
+}
+
+type UpstreamProbeResult struct {
+	Name      string `json:"name"`
+	Protocol  string `json:"protocol"`
+	Host      string `json:"host"`
+	Port      int    `json:"port"`
+	Reachable bool   `json:"reachable"`
+	LatencyMs int64  `json:"latencyMs"`
+	Error     string `json:"error"`
 }
 
 type TestResult struct {
@@ -275,16 +327,24 @@ type Dependency struct {
 }
 
 type SettingsInput struct {
-	Protocol        string `json:"protocol"`
-	Host            string `json:"host"`
-	Port            int    `json:"port"`
-	NoProxy         string `json:"noProxy"`
-	Engine          string `json:"engine"`
-	WSLDistro       string `json:"wslDistro"`
-	OpenCodex       bool   `json:"openCodex"`
-	StopCodexOnExit bool   `json:"stopCodexOnExit"`
-	RetentionDays   int    `json:"retentionDays"`
-	MaxMemoryRows   int    `json:"maxMemoryRows"`
+	Protocol        string            `json:"protocol"`
+	Host            string            `json:"host"`
+	Port            int               `json:"port"`
+	NoProxy         string            `json:"noProxy"`
+	Engine          string            `json:"engine"`
+	WSLDistro       string            `json:"wslDistro"`
+	OpenCodex       bool              `json:"openCodex"`
+	StopCodexOnExit bool              `json:"stopCodexOnExit"`
+	RetentionDays   int               `json:"retentionDays"`
+	MaxMemoryRows   int               `json:"maxMemoryRows"`
+	Upstreams       []UpstreamProfile `json:"upstreams"`
+	ActiveUpstream  string            `json:"activeUpstream"`
+	AutoFailover    bool              `json:"autoFailover"`
+	HostFilterMode  string            `json:"hostFilterMode"`
+	AllowedHosts    []string          `json:"allowedHosts"`
+	Routes          []RouteRule       `json:"routes"`
+	MinimizeToTray  bool              `json:"minimizeToTray"`
+	LaunchAtLogin   bool              `json:"launchAtLogin"`
 }
 
 type LaunchOptions struct {

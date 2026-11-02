@@ -25,38 +25,60 @@ import (
 type RecordEvent func(event string, record model.RequestRecord)
 
 type Server struct {
-	upstream   model.Upstream
-	dialer     *UpstreamDialer
-	interfaceL net.Listener
-	kernelL    net.Listener
-	interfaceS *http.Server
-	kernelS    *http.Server
-	interfaceP int
-	kernelP    int
-	onRecord   RecordEvent
-	startedAt  time.Time
-	closeOnce  sync.Once
+	upstream     model.Upstream
+	dialer       *UpstreamDialer
+	routes       []model.RouteRule
+	allowedHosts []string
+	hostFilter   string
+	direct       *net.Dialer
+	resolveProcess func(localPort int) string
+	interfaceL   net.Listener
+	kernelL      net.Listener
+	interfaceS   *http.Server
+	kernelS      *http.Server
+	interfaceP   int
+	kernelP      int
+	onRecord     RecordEvent
+	startedAt    time.Time
+	closeOnce    sync.Once
 }
 
-func Start(ctx context.Context, upstream model.Upstream, host string, preferredPort int, preferredKernelPort int, onRecord RecordEvent) (*Server, error) {
-	dialer := NewUpstreamDialer(upstream)
-	interfaceL, err := listen(host, preferredPort)
+type Options struct {
+	Upstream            model.Upstream
+	Host                string
+	PreferredPort       int
+	PreferredKernelPort int
+	Routes              []model.RouteRule
+	AllowedHosts        []string
+	HostFilterMode      string
+	ResolveProcess      func(localPort int) string
+	OnRecord            RecordEvent
+}
+
+func Start(ctx context.Context, opts Options) (*Server, error) {
+	dialer := NewUpstreamDialer(opts.Upstream)
+	interfaceL, err := listen(opts.Host, opts.PreferredPort)
 	if err != nil {
 		return nil, fmt.Errorf("start Lane interface listener: %w", err)
 	}
-	kernelL, err := listen(host, preferredKernelPort)
+	kernelL, err := listen(opts.Host, opts.PreferredKernelPort)
 	if err != nil {
 		interfaceL.Close()
 		return nil, fmt.Errorf("start Lane kernel listener: %w", err)
 	}
 	s := &Server{
-		upstream:   upstream,
-		dialer:     dialer,
+		upstream:     opts.Upstream,
+		dialer:       dialer,
+		routes:       opts.Routes,
+		allowedHosts: opts.AllowedHosts,
+		hostFilter:   opts.HostFilterMode,
+		resolveProcess: opts.ResolveProcess,
+		direct:       &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second},
 		interfaceL: interfaceL,
 		kernelL:    kernelL,
 		interfaceP: portOf(interfaceL.Addr()),
 		kernelP:    portOf(kernelL.Addr()),
-		onRecord:   onRecord,
+		onRecord:   opts.OnRecord,
 		startedAt:  time.Now(),
 	}
 	s.interfaceS = &http.Server{
@@ -119,6 +141,48 @@ func (s *Server) handler(source string) http.Handler {
 		}
 		s.handleHTTP(source, w, r)
 	})
+}
+
+func matchPattern(pattern string, host string) bool {
+	pattern = strings.ToLower(strings.TrimSpace(pattern))
+	host = strings.ToLower(host)
+	if pattern == "*" {
+		return true
+	}
+	if suffix, ok := strings.CutPrefix(pattern, "*."); ok {
+		return host == suffix || strings.HasSuffix(host, "."+suffix)
+	}
+	return pattern == host
+}
+
+func (s *Server) routeAction(host string) string {
+	for _, rule := range s.routes {
+		if matchPattern(rule.Pattern, host) {
+			return rule.Action
+		}
+	}
+	return model.RouteProxy
+}
+
+func (s *Server) hostAllowed(host string) bool {
+	if s.hostFilter != model.HostFilterAllowlist {
+		return true
+	}
+	for _, pattern := range s.allowedHosts {
+		if matchPattern(pattern, host) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) dialTarget(ctx context.Context, host string, target string) (net.Conn, string, error) {
+	if s.routeAction(host) == model.RouteDirect {
+		conn, err := s.direct.DialContext(ctx, "tcp", target)
+		return conn, "DIRECT", err
+	}
+	conn, err := s.dialer.Dial(ctx, target)
+	return conn, upstreamLabel(s.upstream), err
 }
 
 func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
@@ -189,10 +253,25 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		Upstream:  upstreamLabel(s.upstream),
 		StartedAt: started.Format(time.RFC3339Nano),
 	}
+	if !s.hostAllowed(host) {
+		record.Status = http.StatusForbidden
+		record.Result = "blocked"
+		record.Error = "host is not in the Lane allowlist"
+		record.LatencyMs = time.Since(started).Milliseconds()
+		record.DurationMs = record.LatencyMs
+		record.FinishedAt = time.Now().Format(time.RFC3339Nano)
+		s.emitFinished(record)
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = io.WriteString(w, "Codex Lane: host is not in the allowlist")
+		return
+	}
 	s.emit("request:new", record)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	upstreamConn, err := s.dialer.Dial(ctx, target)
+	upstreamConn, dialLabel, err := s.dialTarget(ctx, host, target)
+	record.Upstream = dialLabel
 	if err != nil {
 		record.Status = http.StatusBadGateway
 		record.Result = "failed"
@@ -239,6 +318,11 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		s.emitFinished(record)
 		return
 	}
+	if s.resolveProcess != nil {
+		if addr, ok := clientConn.RemoteAddr().(*net.TCPAddr); ok {
+			record.Process = s.resolveProcess(addr.Port)
+		}
+	}
 	record.Status = http.StatusOK
 	record.Result = "ok"
 	record.LatencyMs = time.Since(started).Milliseconds()
@@ -263,6 +347,11 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 	} else if r.URL.Scheme == "https" {
 		port = 443
 	}
+	action := s.routeAction(host)
+	dialLabel := upstreamLabel(s.upstream)
+	if action == model.RouteDirect {
+		dialLabel = "DIRECT"
+	}
 	record := model.RequestRecord{
 		ID:        newRequestID(),
 		Time:      started.Format("15:04:05.000"),
@@ -271,8 +360,19 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 		Host:      host,
 		Port:      port,
 		Scheme:    r.URL.Scheme,
-		Upstream:  upstreamLabel(s.upstream),
+		Upstream:  dialLabel,
 		StartedAt: started.Format(time.RFC3339Nano),
+	}
+	if !s.hostAllowed(host) {
+		record.Status = http.StatusForbidden
+		record.Result = "blocked"
+		record.Error = "host is not in the Lane allowlist"
+		record.LatencyMs = time.Since(started).Milliseconds()
+		record.DurationMs = record.LatencyMs
+		record.FinishedAt = time.Now().Format(time.RFC3339Nano)
+		s.emitFinished(record)
+		http.Error(w, "Codex Lane: host is not in the allowlist", http.StatusForbidden)
+		return
 	}
 	s.emit("request:new", record)
 
@@ -288,7 +388,7 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 		Transport: &http.Transport{
 			Proxy: nil,
 			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				conn, err := s.dialer.Dial(ctx, address)
+				conn, _, err := s.dialTarget(ctx, host, address)
 				if err != nil {
 					return nil, err
 				}
@@ -317,6 +417,13 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 			http.Error(writer, "Codex Lane upstream: "+err.Error(), http.StatusBadGateway)
 		},
 		FlushInterval: -1,
+	}
+	if s.resolveProcess != nil && r.RemoteAddr != "" {
+		if _, portText, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+			if port, err := net.LookupPort("tcp", portText); err == nil {
+				record.Process = s.resolveProcess(port)
+			}
+		}
 	}
 	proxy.ServeHTTP(w, r)
 	record.BytesUp = bytesUp.Load()

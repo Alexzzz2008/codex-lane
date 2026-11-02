@@ -9,6 +9,7 @@ export type {
     DomainProbe,
     Environment,
     Event,
+    HistoryPoint,
     LaneStatus,
     LaunchOptions,
     LaunchResult,
@@ -17,12 +18,15 @@ export type {
     RequestSeriesPoint,
     RequestStats,
     ResolvedEngine,
+    RouteRule,
     Settings,
     SettingsInput,
     Snapshot,
     TestReport,
     TestResult,
     UpdateStatus,
+    UpstreamProbeResult,
+    UpstreamProfile,
     UpstreamStatus,
     WSLStatus
 } from "./models.js";

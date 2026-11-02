@@ -35,8 +35,9 @@ func Default() model.Config {
 		AskBeforeKill:       true,
 		RequireHealthyProxy: true,
 		Startup: model.Startup{
-			OpenCodex:       false,
-			StopCodexOnExit: false,
+		OpenCodex:       false,
+		StopCodexOnExit: false,
+		MinimizeToTray:  true,
 		},
 		Logging: model.Logging{
 			RequestMetadata: true,
@@ -146,6 +147,8 @@ func Normalize(cfg *model.Config) {
 	cfg.Engine = strings.ToLower(strings.TrimSpace(cfg.Engine))
 	cfg.WSLDistro = strings.TrimSpace(cfg.WSLDistro)
 	cfg.Lane.ListenHost = strings.TrimSpace(cfg.Lane.ListenHost)
+	cfg.Lane.HostFilterMode = strings.ToLower(strings.TrimSpace(cfg.Lane.HostFilterMode))
+	cfg.ActiveUpstream = strings.TrimSpace(cfg.ActiveUpstream)
 
 	if cfg.Upstream.Protocol == "" {
 		cfg.Upstream.Protocol = model.ProtocolHTTP
@@ -164,6 +167,18 @@ func Normalize(cfg *model.Config) {
 	}
 	if cfg.Lane.ListenHost == "" || cfg.Lane.ListenHost == "localhost" {
 		cfg.Lane.ListenHost = "127.0.0.1"
+	}
+	if cfg.Lane.HostFilterMode == "" {
+		cfg.Lane.HostFilterMode = model.HostFilterOff
+	}
+	if cfg.Lane.AllowedHosts == nil {
+		cfg.Lane.AllowedHosts = []string{}
+	}
+	if cfg.Lane.Routes == nil {
+		cfg.Lane.Routes = []model.RouteRule{}
+	}
+	if cfg.Upstreams == nil {
+		cfg.Upstreams = []model.UpstreamProfile{}
 	}
 	if cfg.Logging.RetentionDays <= 0 {
 		cfg.Logging.RetentionDays = 14
@@ -191,6 +206,51 @@ func Validate(cfg model.Config) error {
 	if cfg.Lane.ListenPort < 0 || cfg.Lane.ListenPort > 65535 {
 		return fmt.Errorf("lane listen port must be between 0 and 65535")
 	}
+	switch cfg.Lane.HostFilterMode {
+	case model.HostFilterOff, model.HostFilterAllowlist:
+	default:
+		return fmt.Errorf("unsupported host filter mode %q", cfg.Lane.HostFilterMode)
+	}
+	for _, pattern := range cfg.Lane.AllowedHosts {
+		if err := validateHostPattern(pattern); err != nil {
+			return fmt.Errorf("allowed host %q: %w", pattern, err)
+		}
+	}
+	for _, rule := range cfg.Lane.Routes {
+		if err := validateHostPattern(rule.Pattern); err != nil {
+			return fmt.Errorf("route pattern %q: %w", rule.Pattern, err)
+		}
+		switch rule.Action {
+		case model.RouteProxy, model.RouteDirect:
+		default:
+			return fmt.Errorf("route action %q must be proxy or direct", rule.Action)
+		}
+	}
+	seenProfiles := make(map[string]bool, len(cfg.Upstreams))
+	for _, profile := range cfg.Upstreams {
+		name := strings.TrimSpace(profile.Name)
+		if name == "" {
+			return fmt.Errorf("upstream profile name is required")
+		}
+		if seenProfiles[name] {
+			return fmt.Errorf("duplicate upstream profile name %q", name)
+		}
+		seenProfiles[name] = true
+		switch profile.Protocol {
+		case model.ProtocolHTTP, model.ProtocolHTTPS, model.ProtocolSOCKS5:
+		default:
+			return fmt.Errorf("upstream profile %q: unsupported protocol %q", name, profile.Protocol)
+		}
+		if err := validateHost(profile.Host); err != nil {
+			return fmt.Errorf("upstream profile %q host: %w", name, err)
+		}
+		if profile.Port < 1 || profile.Port > 65535 {
+			return fmt.Errorf("upstream profile %q port must be between 1 and 65535", name)
+		}
+	}
+	if cfg.ActiveUpstream != "" && !seenProfiles[cfg.ActiveUpstream] {
+		return fmt.Errorf("active upstream profile %q does not exist", cfg.ActiveUpstream)
+	}
 	switch cfg.Engine {
 	case model.EngineAuto, model.EngineWindows, model.EngineWSL:
 	default:
@@ -208,6 +268,17 @@ func Validate(cfg model.Config) error {
 		}
 	}
 	return nil
+}
+
+func validateHostPattern(pattern string) error {
+	pattern = strings.TrimSpace(pattern)
+	if pattern == "*" {
+		return nil
+	}
+	if suffix, ok := strings.CutPrefix(pattern, "*."); ok {
+		return validateHost(suffix)
+	}
+	return validateHost(pattern)
 }
 
 func validateHost(host string) error {
@@ -240,14 +311,44 @@ func validateHost(host string) error {
 }
 
 func ApplySettings(cfg *model.Config, in model.SettingsInput) error {
-	cfg.Upstream.Protocol = strings.ToLower(strings.TrimSpace(in.Protocol))
-	cfg.Upstream.Host = strings.TrimSpace(in.Host)
-	cfg.Upstream.Port = in.Port
+	profiles := make([]model.UpstreamProfile, 0, len(in.Upstreams))
+	for _, profile := range in.Upstreams {
+		profiles = append(profiles, model.UpstreamProfile{
+			Name:     strings.TrimSpace(profile.Name),
+			Protocol: strings.ToLower(strings.TrimSpace(profile.Protocol)),
+			Host:     strings.TrimSpace(profile.Host),
+			Port:     profile.Port,
+		})
+	}
+	active := strings.TrimSpace(in.ActiveUpstream)
+	cfg.Upstreams = profiles
+	cfg.ActiveUpstream = active
+	if profile := findProfile(profiles, active); profile != nil {
+		cfg.Upstream.Protocol = profile.Protocol
+		cfg.Upstream.Host = profile.Host
+		cfg.Upstream.Port = profile.Port
+	} else {
+		cfg.Upstream.Protocol = strings.ToLower(strings.TrimSpace(in.Protocol))
+		cfg.Upstream.Host = strings.TrimSpace(in.Host)
+		cfg.Upstream.Port = in.Port
+	}
 	cfg.Upstream.NoProxy = strings.TrimSpace(in.NoProxy)
 	cfg.Engine = strings.ToLower(strings.TrimSpace(in.Engine))
 	cfg.WSLDistro = strings.TrimSpace(in.WSLDistro)
 	cfg.Startup.OpenCodex = in.OpenCodex
 	cfg.Startup.StopCodexOnExit = in.StopCodexOnExit
+	cfg.Startup.MinimizeToTray = in.MinimizeToTray
+	cfg.AutoFailover = in.AutoFailover
+	cfg.Lane.HostFilterMode = strings.ToLower(strings.TrimSpace(in.HostFilterMode))
+	cfg.Lane.AllowedHosts = trimPatterns(in.AllowedHosts)
+	routes := make([]model.RouteRule, 0, len(in.Routes))
+	for _, rule := range in.Routes {
+		routes = append(routes, model.RouteRule{
+			Pattern: strings.TrimSpace(rule.Pattern),
+			Action:  strings.ToLower(strings.TrimSpace(rule.Action)),
+		})
+	}
+	cfg.Lane.Routes = routes
 	if in.RetentionDays > 0 {
 		cfg.Logging.RetentionDays = in.RetentionDays
 	}
@@ -256,6 +357,29 @@ func ApplySettings(cfg *model.Config, in model.SettingsInput) error {
 	}
 	Normalize(cfg)
 	return Validate(*cfg)
+}
+
+func findProfile(profiles []model.UpstreamProfile, name string) *model.UpstreamProfile {
+	if name == "" {
+		return nil
+	}
+	for index := range profiles {
+		if profiles[index].Name == name {
+			return &profiles[index]
+		}
+	}
+	return nil
+}
+
+func trimPatterns(patterns []string) []string {
+	out := make([]string, 0, len(patterns))
+	for _, pattern := range patterns {
+		pattern = strings.TrimSpace(pattern)
+		if pattern != "" {
+			out = append(out, pattern)
+		}
+	}
+	return out
 }
 
 func Settings(cfg model.Config) model.Settings {
@@ -270,6 +394,13 @@ func Settings(cfg model.Config) model.Settings {
 		StopCodexOnExit: cfg.Startup.StopCodexOnExit,
 		RetentionDays:   cfg.Logging.RetentionDays,
 		MaxMemoryRows:   cfg.Logging.MaxMemoryRows,
+		Upstreams:       cfg.Upstreams,
+		ActiveUpstream:  cfg.ActiveUpstream,
+		AutoFailover:    cfg.AutoFailover,
+		HostFilterMode:  cfg.Lane.HostFilterMode,
+		AllowedHosts:    cfg.Lane.AllowedHosts,
+		Routes:          cfg.Lane.Routes,
+		MinimizeToTray:  cfg.Startup.MinimizeToTray,
 	}
 }
 

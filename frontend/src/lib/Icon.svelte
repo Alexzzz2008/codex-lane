@@ -58,8 +58,15 @@
 </script>
 
 <svg viewBox="0 0 24 24" width={size} height={size} fill="none" aria-hidden="true">
-  {#each icons[name] ?? icons.alert as path}
-    <path d={path} stroke="currentColor" stroke-width={stroke} stroke-linecap="round" stroke-linejoin="round" />
+  {#each icons[name] ?? icons.alert as path, index}
+    <path
+      d={path}
+      fill={name === "mark" && index === 2 ? "#ffffff" : "none"}
+      stroke={name === "mark" && index === 2 ? "none" : "currentColor"}
+      stroke-width={stroke}
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
   {/each}
 </svg>
 

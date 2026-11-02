@@ -136,7 +136,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 		s.updateDeepCache(environment, codexStatus, engine, wslStatus)
 	}
 
-	return model.Snapshot{
+	snapshot := model.Snapshot{
 		Version:       Version,
 		RepositoryURL: RepositoryURL,
 		ReleasesURL:   ReleasesURL,
@@ -156,6 +156,8 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 		Update:        updateStatus,
 		Events:        events,
 	}
+	snapshot.Settings.LaunchAtLogin = platform.IsAutoStart()
+	return snapshot
 }
 
 func gatewayTCPCheck(ctx context.Context, address string) (time.Duration, error) {
