@@ -60,6 +60,9 @@ func Install(staged, executable string) (string, error) {
 		}
 		return "", fmt.Errorf("put new executable in place: %w", err)
 	}
+	// The staged copy is hidden while it sits next to the running executable;
+	// clear the attribute so the installed file stays visible in Explorer.
+	unhideFile(executable)
 	_ = removeWithRetry(staged)
 	return old, nil
 }
@@ -82,11 +85,60 @@ func Rollback(executable, old string) error {
 }
 
 func CleanupOld(executable string) {
-	_ = removeWithRetry(executable + ".old")
+	removeStaleOld(executable + ".old")
 	matches, _ := filepath.Glob(executable + ".old-*")
 	for _, match := range matches {
-		_ = removeWithRetry(match)
+		removeStaleOld(match)
 	}
+}
+
+// removeStaleOld keeps recent backups so a failed start still has something to
+// fall back to; older ones are removed on the next launch.
+func removeStaleOld(path string) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return
+	}
+	if time.Since(info.ModTime()) < 10*time.Minute {
+		return
+	}
+	_ = removeWithRetry(path)
+}
+
+// RestorePrevious puts the backup created by Install back in place.
+func RestorePrevious(executable string) (string, error) {
+	old, ok := latestBackup(executable)
+	if !ok {
+		return "", errors.New("no previous executable")
+	}
+	if err := removeWithRetry(executable); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("remove current executable: %w", err)
+	}
+	if err := moveWithRetry(old, executable); err != nil {
+		return "", fmt.Errorf("restore previous executable: %w", err)
+	}
+	unhideFile(executable)
+	return executable, nil
+}
+
+// latestBackup returns the newest executable backup written by Install.
+func latestBackup(executable string) (string, bool) {
+	candidates := []string{executable + ".old"}
+	matches, _ := filepath.Glob(executable + ".old-*")
+	candidates = append(candidates, matches...)
+	var newest string
+	var newestTime time.Time
+	for _, candidate := range candidates {
+		info, err := os.Stat(candidate)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if newest == "" || info.ModTime().After(newestTime) {
+			newest = candidate
+			newestTime = info.ModTime()
+		}
+	}
+	return newest, newest != ""
 }
 
 func oldName(executable string) string {

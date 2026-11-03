@@ -45,10 +45,27 @@ func main() {
 	if err := platform.EnsureWebView2(); err != nil {
 		os.Exit(1)
 	}
+	executable, _ := selfupdate.Executable()
+	predecessor := selfupdate.PredecessorPID()
+	platform.AppLog("启动 v%s exe=%s replaces=%d", appservice.Version, executable, predecessor)
 	selfupdate.ReportStarted()
 	selfupdate.WaitForPredecessor()
-	if executable, err := selfupdate.Executable(); err == nil {
-		selfupdate.CleanupOld(executable)
+	if predecessor > 0 {
+		// The window can only appear once the previous process released the
+		// Wails instance mutex. If it never does, put the old build back so the
+		// user is not left without a working window.
+		if err := selfupdate.WaitInstanceFree(instanceMutexName, 25*time.Second); err != nil {
+			platform.AppLog("旧实例未退出，尝试回滚：%v", err)
+			if restored, restoreErr := selfupdate.RestorePrevious(executable); restoreErr == nil {
+				platform.AppLog("已回滚到上一版本并重新启动：%s", restored)
+				_ = selfupdate.StartDetached(restored)
+				os.Exit(0)
+			} else {
+				platform.AppLog("回滚失败：%v", restoreErr)
+				platform.ShowNotice("Codex Lane", "更新后的程序未能启动，且回滚失败。\n\n请从 Releases 重新下载最新版本。")
+			}
+			os.Exit(1)
+		}
 	}
 	notifyStaleInstance()
 
@@ -81,6 +98,7 @@ func main() {
 		app.Event.Emit(name, data...)
 	})
 	service.SetQuit(func() {
+		platform.AppLog("收到退出请求")
 		app.Quit()
 	})
 
@@ -107,13 +125,21 @@ func main() {
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		fitWindow(app, window)
+		platform.AppLog("窗口已显示")
+		if executable != "" {
+			selfupdate.CleanupOld(executable)
+		}
 	})
 
 	if err := app.Run(); err != nil {
+		platform.AppLog("app.Run 返回错误：%v", err)
 		log.Fatal(err)
 	}
+	platform.AppLog("应用已退出")
 	platform.ClearInstance()
 }
+
+const instanceMutexName = "wails-app-io.github.alexzzz2008.codexlane-sim"
 
 // notifyStaleInstance tells the user why a freshly downloaded build did not
 // appear: Windows allows only one Codex Lane window per session, so the running

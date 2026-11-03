@@ -53,6 +53,7 @@ type Startup struct {
 	OpenCodex       bool `json:"openCodex"`
 	StopCodexOnExit bool `json:"stopCodexOnExit"`
 	MinimizeToTray  bool `json:"minimizeToTray"`
+	AdoptCodex      bool `json:"adoptCodex"`
 }
 
 type Logging struct {
@@ -85,6 +86,7 @@ type Settings struct {
 	WSLDistro       string            `json:"wslDistro"`
 	OpenCodex       bool              `json:"openCodex"`
 	StopCodexOnExit bool              `json:"stopCodexOnExit"`
+	AdoptCodex      bool              `json:"adoptCodex"`
 	RetentionDays   int               `json:"retentionDays"`
 	MaxMemoryRows   int               `json:"maxMemoryRows"`
 	Upstreams       []UpstreamProfile `json:"upstreams"`
@@ -338,6 +340,7 @@ type SettingsInput struct {
 	WSLDistro       string            `json:"wslDistro"`
 	OpenCodex       bool              `json:"openCodex"`
 	StopCodexOnExit bool              `json:"stopCodexOnExit"`
+	AdoptCodex      bool              `json:"adoptCodex"`
 	RetentionDays   int               `json:"retentionDays"`
 	MaxMemoryRows   int               `json:"maxMemoryRows"`
 	Upstreams       []UpstreamProfile `json:"upstreams"`

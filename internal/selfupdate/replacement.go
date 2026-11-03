@@ -91,6 +91,25 @@ func ReportStarted() {
 	}
 }
 
+// PredecessorPID reports the process that this build replaces, or 0 when the
+// build was started normally.
+func PredecessorPID() int {
+	value := strings.TrimSpace(os.Getenv(predecessorEnv))
+	pid, err := strconv.Atoi(value)
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
+}
+
+// StartDetached launches a previously installed build without waiting for it.
+func StartDetached(executable string) error {
+	command := exec.Command(executable)
+	command.Stdin, command.Stdout, command.Stderr = nil, nil, nil
+	detach(command)
+	return command.Start()
+}
+
 func WaitForPredecessor() {
 	value := strings.TrimSpace(os.Getenv(predecessorEnv))
 	_ = os.Unsetenv(predecessorEnv)

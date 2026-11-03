@@ -4,8 +4,10 @@ package selfupdate
 
 import (
 	"errors"
+	"fmt"
 	"os/exec"
 	"syscall"
+	"time"
 
 	"golang.org/x/sys/windows"
 )
@@ -57,4 +59,33 @@ func hideFile(path string) {
 		return
 	}
 	_ = windows.SetFileAttributes(name, windows.FILE_ATTRIBUTE_HIDDEN)
+}
+
+func unhideFile(path string) {
+	name, err := windows.UTF16PtrFromString(path)
+	if err != nil {
+		return
+	}
+	_ = windows.SetFileAttributes(name, windows.FILE_ATTRIBUTE_NORMAL)
+}
+
+// WaitInstanceFree blocks until no process owns the named Wails single-instance
+// mutex, which is the real gate for showing a window.
+func WaitInstanceFree(name string, timeout time.Duration) error {
+	pointer, err := windows.UTF16PtrFromString(name)
+	if err != nil {
+		return err
+	}
+	deadline := time.Now().Add(timeout)
+	for {
+		handle, err := windows.CreateMutex(nil, false, pointer)
+		if err == nil {
+			windows.CloseHandle(handle)
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("previous instance still holds %s", name)
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
 }

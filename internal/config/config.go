@@ -38,6 +38,7 @@ func Default() model.Config {
 			OpenCodex:       false,
 			StopCodexOnExit: false,
 			MinimizeToTray:  true,
+			AdoptCodex:      true,
 		},
 		Logging: model.Logging{
 			RequestMetadata: true,
@@ -62,11 +63,33 @@ func Load(path string) (model.Config, error) {
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return cfg, fmt.Errorf("parse config %s: %w", path, err)
 	}
+	applyStartupDefaults(data, &cfg)
 	Normalize(&cfg)
 	if err := Validate(cfg); err != nil {
 		return cfg, err
 	}
 	return cfg, nil
+}
+
+// applyStartupDefaults turns features on for configs written before the field
+// existed, while still honouring an explicit false.
+func applyStartupDefaults(data []byte, cfg *model.Config) {
+	var root map[string]json.RawMessage
+	if err := json.Unmarshal(data, &root); err != nil {
+		return
+	}
+	startupRaw, ok := root["startup"]
+	if !ok {
+		cfg.Startup.AdoptCodex = true
+		return
+	}
+	var startup map[string]json.RawMessage
+	if err := json.Unmarshal(startupRaw, &startup); err != nil {
+		return
+	}
+	if _, exists := startup["adoptCodex"]; !exists {
+		cfg.Startup.AdoptCodex = true
+	}
 }
 
 func Save(path string, cfg model.Config) error {
@@ -342,6 +365,7 @@ func ApplySettings(cfg *model.Config, in model.SettingsInput) error {
 	cfg.Startup.OpenCodex = in.OpenCodex
 	cfg.Startup.StopCodexOnExit = in.StopCodexOnExit
 	cfg.Startup.MinimizeToTray = in.MinimizeToTray
+	cfg.Startup.AdoptCodex = in.AdoptCodex
 	cfg.AutoFailover = in.AutoFailover
 	cfg.Lane.HostFilterMode = strings.ToLower(strings.TrimSpace(in.HostFilterMode))
 	cfg.Lane.AllowedHosts = trimPatterns(in.AllowedHosts)
@@ -396,6 +420,7 @@ func Settings(cfg model.Config) model.Settings {
 		WSLDistro:       cfg.WSLDistro,
 		OpenCodex:       cfg.Startup.OpenCodex,
 		StopCodexOnExit: cfg.Startup.StopCodexOnExit,
+		AdoptCodex:      cfg.Startup.AdoptCodex,
 		RetentionDays:   cfg.Logging.RetentionDays,
 		MaxMemoryRows:   cfg.Logging.MaxMemoryRows,
 		Upstreams:       cfg.Upstreams,

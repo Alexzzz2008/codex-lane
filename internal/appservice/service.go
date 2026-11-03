@@ -24,7 +24,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.34"
+const Version = "0.1.35"
 
 type Emitter func(name string, data ...any)
 
@@ -44,6 +44,7 @@ type AppService struct {
 	diagnostic            *model.DiagnosticReport
 	lastDeep              time.Time
 	lastCodexCheck        time.Time
+	lastCodexLaunch       time.Time
 	cachedPackage         codex.PackageInfo
 	cachedCodex           model.CodexStatus
 	cachedDeps            []model.Dependency
@@ -111,6 +112,7 @@ func (s *AppService) startup(ctx context.Context) error {
 	}
 	s.Refresh()
 	s.startMonitor()
+	s.startCodexWatcher()
 	s.startUpdateLoop()
 	if cfg.Startup.OpenCodex {
 		_, _ = s.LaunchCodex(model.LaunchOptions{})
@@ -438,6 +440,7 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 	s.addEvent("ok", "Codex 已启动", "PID "+fmt.Sprint(result.PID)+" · "+engine.Resolved)
 	s.mu.Lock()
 	s.lastCodexCheck = time.Time{}
+	s.lastCodexLaunch = time.Now()
 	s.mu.Unlock()
 	return result, nil
 }

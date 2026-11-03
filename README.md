@@ -21,6 +21,7 @@ Codex 内核 ─── 内核入口 ───┘
 ## 功能
 
 - **双入口**：界面与内核使用独立回环端口，支持一键启动、停止和重新接入 Codex。
+- **自动接管**：从开始菜单或桌面图标打开 Codex 时，检测到未经过 Lane 会自动重启接入，可在设置中关闭。
 - **多上游**：保存多套代理档案，支持测速、切换和故障自动切换。
 - **分流控制**：按域名选择代理或直连；白名单可阻止其他程序借用 Lane。
 - **请求日志**：查看代理链路、状态、延迟和流量，支持报告与 HAR 导出。
@@ -51,6 +52,7 @@ CodexLane.exe --check-webview2   检查 WebView2 Runtime
 ```text
 %LOCALAPPDATA%\CodexLane\launcher.json
 %LOCALAPPDATA%\CodexLane\logs\requests-YYYYMMDD.jsonl
+%LOCALAPPDATA%\CodexLane\logs\app.log
 ```
 
 旧版放在 exe 同目录的 `launcher.json` 会自动迁移。日志默认保留 14 天。

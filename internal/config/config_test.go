@@ -1,10 +1,44 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 )
+
+func TestLoadAdoptsCodexDefaultForLegacyConfig(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "launcher.json")
+	legacy := `{"schemaVersion": 1, "startup": {"openCodex": false, "minimizeToTray": true}}`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if !cfg.Startup.AdoptCodex {
+		t.Fatal("legacy config should enable Codex adoption by default")
+	}
+}
+
+func TestLoadKeepsExplicitAdoptCodexOff(t *testing.T) {
+	directory := t.TempDir()
+	path := filepath.Join(directory, "launcher.json")
+	disabled := `{"schemaVersion": 1, "startup": {"openCodex": false, "adoptCodex": false}}`
+	if err := os.WriteFile(path, []byte(disabled), 0o600); err != nil {
+		t.Fatalf("seed config: %v", err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Startup.AdoptCodex {
+		t.Fatal("explicitly disabled adoption must stay off")
+	}
+}
 
 func TestApplySettingsUpdatesActiveProfileFromTopFields(t *testing.T) {
 	cfg := Default()

@@ -5,6 +5,7 @@ package selfupdate
 import (
 	"os/exec"
 	"syscall"
+	"time"
 )
 
 func detach(command *exec.Cmd) {
@@ -27,3 +28,7 @@ func trialStart(string) error {
 }
 
 func hideFile(string) {}
+
+func unhideFile(string) {}
+
+func WaitInstanceFree(string, time.Duration) error { return nil }

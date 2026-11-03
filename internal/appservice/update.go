@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/model"
+	"github.com/Alexzzz2008/codex-lane/internal/platform"
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
@@ -86,8 +87,10 @@ func (s *AppService) RestartToUpdate() (model.UpdateStatus, error) {
 	}
 	old, err := selfupdate.Install(staged, executable)
 	if err != nil {
+		platform.AppLog("更新安装失败：%v", err)
 		return s.failUpdate("替换程序失败", err)
 	}
+	platform.AppLog("更新已安装 v%s，旧版本 %s", version, old)
 	s.mu.Lock()
 	s.stagedUpdate = ""
 	s.stagedVersion = ""
@@ -96,15 +99,18 @@ func (s *AppService) RestartToUpdate() (model.UpdateStatus, error) {
 	marker := selfupdate.MarkerPath()
 	replacement, err := selfupdate.StartReplacement(executable, marker)
 	if err != nil {
+		platform.AppLog("启动新版本失败：%v", err)
 		_ = selfupdate.Rollback(executable, old)
 		return s.failUpdate("新版本启动失败，已回滚", err)
 	}
 	if err := replacement.WaitStarted(marker, 20*time.Second); err != nil {
+		platform.AppLog("新版本未报告启动：%v", err)
 		replacement.Kill()
 		_ = selfupdate.Rollback(executable, old)
 		return s.failUpdate("新版本未能启动，已回滚", err)
 	}
 	_ = os.Remove(marker)
+	platform.AppLog("新版本已启动，准备退出旧实例")
 
 	status = s.currentUpdateStatus()
 	status.Status = "restarting"
@@ -113,6 +119,7 @@ func (s *AppService) RestartToUpdate() (model.UpdateStatus, error) {
 	s.addEvent("info", "正在重启并更新", "Codex 不会被结束，通道会短暂中断")
 	go func() {
 		time.Sleep(350 * time.Millisecond)
+		platform.AppLog("退出旧实例以完成更新")
 		quit()
 	}()
 	return status, nil
