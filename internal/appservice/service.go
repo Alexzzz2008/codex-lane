@@ -24,7 +24,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.33"
+const Version = "0.1.34"
 
 type Emitter func(name string, data ...any)
 

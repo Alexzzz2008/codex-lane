@@ -437,6 +437,11 @@ func isVersion(value string) bool {
 	return true
 }
 
+// CompareVersions reports whether left is newer than right.
+func CompareVersions(left, right string) int {
+	return compareVersions(left, right)
+}
+
 func compareVersions(left, right string) int {
 	leftCore, leftPre := versionParts(left)
 	rightCore, rightPre := versionParts(right)

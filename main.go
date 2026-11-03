@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -49,6 +50,7 @@ func main() {
 	if executable, err := selfupdate.Executable(); err == nil {
 		selfupdate.CleanupOld(executable)
 	}
+	notifyStaleInstance()
 
 	minimizeToTray := loadMinimizeToTray()
 	service := appservice.New()
@@ -110,6 +112,47 @@ func main() {
 	if err := app.Run(); err != nil {
 		log.Fatal(err)
 	}
+	platform.ClearInstance()
+}
+
+// notifyStaleInstance tells the user why a freshly downloaded build did not
+// appear: Windows allows only one Codex Lane window per session, so the running
+// process keeps the window and silently swallows the launch.
+func notifyStaleInstance() {
+	record, ok := platform.ReadInstance()
+	if ok && record.PID != os.Getpid() && platform.ProcessAlive(record.PID) && looksLikeLane(record.Executable) {
+		// Another Codex Lane owns the window; keep its record and explain why
+		// this launch will not replace it.
+		running := strings.TrimSpace(record.Version)
+		switch {
+		case running == "":
+		case appservice.CompareVersions(appservice.Version, running) > 0:
+			platform.ShowNotice("Codex Lane", fmt.Sprintf(
+				"检测到旧版本 v%s 仍在运行，本次启动的 v%s 无法接管窗口。\n\n"+
+					"请右键任务栏托盘中的 Codex Lane 图标，选择「退出 Codex Lane」，\n"+
+					"再重新打开即可使用 v%s。",
+				running, appservice.Version, appservice.Version))
+		case appservice.CompareVersions(appservice.Version, running) < 0:
+			platform.ShowNotice("Codex Lane", fmt.Sprintf(
+				"已有一个更新版本 v%s 正在运行，本次启动的 v%s 不会接管窗口。\n\n"+
+					"点击「确定」后将打开正在运行的窗口。",
+				running, appservice.Version))
+		}
+		return
+	}
+	if err := platform.WriteInstance(appservice.Version); err != nil {
+		log.Printf("write instance record: %v", err)
+	}
+}
+
+func looksLikeLane(executable string) bool {
+	if executable == "" {
+		return true
+	}
+	if current, err := os.Executable(); err == nil && strings.EqualFold(current, executable) {
+		return true
+	}
+	return strings.Contains(strings.ToLower(filepath.Base(executable)), "codexlane")
 }
 
 func loadMinimizeToTray() bool {
