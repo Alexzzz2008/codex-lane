@@ -1470,7 +1470,7 @@
     .about-update-head .result-pill { flex: none; margin-top: 1px; }
     .about-update p { margin: 9px 0 0; color: var(--text-2); font-size: 10.5px; line-height: 1.5; }
     .about-checked { display: block; margin-top: 5px; color: var(--text-4); font: 9px var(--mono); }
-    .about-update-actions { display: flex; gap: 7px; margin-top: 10px; }
+    .about-update-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
     .about-update-actions .btn { flex: 1; }
     .about-meta {
       min-height: 35px;

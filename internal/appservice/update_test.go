@@ -1,10 +1,17 @@
 package appservice
 
 import (
-	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
+	"time"
+
+	"github.com/Alexzzz2008/codex-lane/internal/config"
+	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
 func TestCompareVersions(t *testing.T) {
@@ -39,52 +46,94 @@ func TestVersionFromReleaseURL(t *testing.T) {
 	}
 }
 
-func TestCheckForUpdatesAvailable(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		writer.Header().Set("Content-Type", "application/atom+xml")
-		_, _ = writer.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <entry>
-    <updated>2026-11-02T10:00:00Z</updated>
-    <link rel="alternate" href="https://github.com/Alexzzz2008/codex-lane/releases/tag/v0.2.0"/>
-  </entry>
-</feed>`))
-	}))
-	defer server.Close()
-
-	status := checkForUpdates(context.Background(), "0.1.0", server.URL)
-	if !status.Available || status.LatestVersion != "0.2.0" || status.Status != "available" {
-		t.Fatalf("unexpected update status: %+v", status)
+func TestEvaluateManifestAvailable(t *testing.T) {
+	manifest := selfupdate.Manifest{
+		Version:    "0.1.31",
+		ReleaseURL: "https://github.com/Alexzzz2008/codex-lane/releases/tag/v0.1.31",
+		Assets: map[string]selfupdate.Asset{
+			updateAssetKey: {
+				URL:    "https://example.com/CodexLane.exe",
+				Size:   1024,
+				SHA256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+			},
+		},
 	}
-	if status.ReleaseURL == "" || status.PublishedAt == "" {
-		t.Fatalf("missing release metadata: %+v", status)
+	status, asset := evaluateManifest(manifest, "0.1.30", "2026-11-03T10:00:00+08:00")
+	if !status.Available || status.Status != "available" {
+		t.Fatalf("unexpected status: %+v", status)
+	}
+	if asset.Size != 1024 || status.Total != 1024 {
+		t.Fatalf("unexpected asset size: %+v", status)
 	}
 }
 
-func TestCheckForUpdatesCurrent(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		_, _ = writer.Write([]byte(`<?xml version="1.0" encoding="UTF-8"?>
-<feed xmlns="http://www.w3.org/2005/Atom">
-  <entry>
-    <updated>2026-11-02T10:00:00Z</updated>
-    <link rel="alternate" href="https://github.com/Alexzzz2008/codex-lane/releases/tag/v0.1.0"/>
-  </entry>
-</feed>`))
-	}))
-	defer server.Close()
-
-	status := checkForUpdates(context.Background(), "0.1.0", server.URL)
+func TestEvaluateManifestCurrent(t *testing.T) {
+	status, _ := evaluateManifest(selfupdate.Manifest{Version: "0.1.30"}, "0.1.30", "")
 	if status.Available || status.Status != "current" {
-		t.Fatalf("unexpected update status: %+v", status)
+		t.Fatalf("unexpected status: %+v", status)
 	}
 }
 
-func TestCheckForUpdatesUnavailable(t *testing.T) {
-	server := httptest.NewServer(http.NotFoundHandler())
-	defer server.Close()
+func TestEvaluateManifestRejectsMissingAsset(t *testing.T) {
+	status, _ := evaluateManifest(selfupdate.Manifest{Version: "0.1.31"}, "0.1.30", "")
+	if !status.Available || status.Status != "error" {
+		t.Fatalf("unexpected status: %+v", status)
+	}
+}
 
-	status := checkForUpdates(context.Background(), "0.1.0", server.URL)
-	if status.Available || status.Status != "unavailable" {
+func TestCheckForUpdatesDownloadsAndVerifies(t *testing.T) {
+	body := []byte("fake update payload")
+	sum := sha256.Sum256(body)
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/latest.json":
+			_ = json.NewEncoder(writer).Encode(selfupdate.Manifest{
+				Version:    "99.0.0",
+				ReleaseURL: "https://example.com/releases/v99.0.0",
+				Assets: map[string]selfupdate.Asset{
+					updateAssetKey: {
+						URL:    "http://" + request.Host + "/CodexLane.exe",
+						Size:   int64(len(body)),
+						SHA256: hex.EncodeToString(sum[:]),
+					},
+				},
+			})
+		case "/CodexLane.exe":
+			_, _ = writer.Write(body)
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("CODEXLANE_UPDATE_FEED", server.URL+"/latest.json")
+
+	service := New()
+	service.paths.LocalAppData = t.TempDir()
+	cfg := config.Default()
+	cfg.Upstream.Host = ""
+	cfg.Upstream.Port = 0
+	service.cfg = cfg
+
+	status := service.CheckForUpdates()
+	if !status.Available || status.LatestVersion != "99.0.0" {
 		t.Fatalf("unexpected update status: %+v", status)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		status = service.currentUpdateStatus()
+		if status.Status == "ready" {
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if status.Status != "ready" {
+		t.Fatalf("update did not become ready: %+v", status)
+	}
+	file := service.stagedUpdate
+	if file == "" {
+		t.Fatal("no staged update path")
+	}
+	if got, err := os.ReadFile(file); err != nil || string(got) != string(body) {
+		t.Fatalf("staged update = %q, err = %v", got, err)
 	}
 }

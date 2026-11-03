@@ -21,39 +21,47 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/observe"
 	"github.com/Alexzzz2008/codex-lane/internal/platform"
 	"github.com/Alexzzz2008/codex-lane/internal/preflight"
+	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.30"
+const Version = "0.1.33"
 
 type Emitter func(name string, data ...any)
 
 type AppService struct {
-	mu                sync.RWMutex
-	ctx               context.Context
-	paths             platform.Paths
-	cfg               model.Config
-	store             *observe.Store
-	lane              *gateway.Server
-	laneCtx           context.Context
-	laneCancel        context.CancelFunc
-	emitFn            Emitter
-	events            []model.Event
-	initError         string
-	testReport        *model.TestReport
-	diagnostic        *model.DiagnosticReport
-	lastDeep          time.Time
-	lastCodexCheck    time.Time
-	cachedPackage     codex.PackageInfo
-	cachedCodex       model.CodexStatus
-	cachedDeps        []model.Dependency
-	cachedWSL         model.WSLStatus
-	cachedEngine      model.ResolvedEngine
-	cachedEnvironment model.Environment
-	cachedUpstream    model.UpstreamStatus
-	updateStatus      model.UpdateStatus
-	lastProbe         time.Time
-	testRunning       atomic.Bool
-	selfTest          bool
+	mu                    sync.RWMutex
+	ctx                   context.Context
+	paths                 platform.Paths
+	cfg                   model.Config
+	store                 *observe.Store
+	lane                  *gateway.Server
+	laneCtx               context.Context
+	laneCancel            context.CancelFunc
+	emitFn                Emitter
+	events                []model.Event
+	initError             string
+	testReport            *model.TestReport
+	diagnostic            *model.DiagnosticReport
+	lastDeep              time.Time
+	lastCodexCheck        time.Time
+	cachedPackage         codex.PackageInfo
+	cachedCodex           model.CodexStatus
+	cachedDeps            []model.Dependency
+	cachedWSL             model.WSLStatus
+	cachedEngine          model.ResolvedEngine
+	cachedEnvironment     model.Environment
+	cachedUpstream        model.UpstreamStatus
+	updateStatus          model.UpdateStatus
+	updateManifest        selfupdate.Manifest
+	lastProbe             time.Time
+	testRunning           atomic.Bool
+	updateCheckRunning    atomic.Bool
+	updateDownloadRunning atomic.Bool
+	updateInstallRunning  atomic.Bool
+	quitFn                func()
+	stagedUpdate          string
+	stagedVersion         string
+	selfTest              bool
 }
 
 func New() *AppService {
@@ -103,6 +111,7 @@ func (s *AppService) startup(ctx context.Context) error {
 	}
 	s.Refresh()
 	s.startMonitor()
+	s.startUpdateLoop()
 	if cfg.Startup.OpenCodex {
 		_, _ = s.LaunchCodex(model.LaunchOptions{})
 	}
@@ -127,6 +136,7 @@ func (s *AppService) ServiceShutdown() error {
 		defer cancel()
 		_ = codex.KillMainProcess(ctx, installPath, pid)
 	}
+	s.installUpdateOnExit()
 	return nil
 }
 

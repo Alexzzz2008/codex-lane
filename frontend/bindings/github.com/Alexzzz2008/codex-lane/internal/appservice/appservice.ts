@@ -21,6 +21,10 @@ export function ClearRequests(): $CancellablePromise<model$0.Snapshot> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ClearRequests");
 }
 
+export function DownloadUpdate(): $CancellablePromise<model$0.UpdateStatus> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.DownloadUpdate");
+}
+
 export function ExportHAR(): $CancellablePromise<string> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ExportHAR");
 }
@@ -71,6 +75,10 @@ export function ProbeProxy(input: model$0.SettingsInput): $CancellablePromise<mo
 
 export function Refresh(): $CancellablePromise<model$0.Snapshot> {
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.Refresh");
+}
+
+export function RestartToUpdate(): $CancellablePromise<model$0.UpdateStatus> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.RestartToUpdate");
 }
 
 export function RunDiagnostics(): $CancellablePromise<model$0.DiagnosticReport> {

@@ -37,6 +37,7 @@
   let modal = $state<ModalState | null>(null);
   let toastID = 0;
   let polling = true;
+  let readyUpdateNotified = "";
 
   const pages: Array<{ id: Page; label: string }> = [
     { id: "overview", label: "总览" },
@@ -285,7 +286,7 @@
       if (snapshot) snapshot.update = status;
       if (!silent) {
         if (status.available) {
-          notify("ok", `发现新版本 v${status.latestVersion}`, "可在设置页的「关于」中打开 Release");
+          notify("ok", `发现新版本 v${status.latestVersion}`, status.status === "ready" ? "已下载并校验，可在「关于」中重启更新" : "正在后台下载更新包");
         } else if (status.status === "current") {
           notify("info", "已是最新版本", `当前 v${status.currentVersion}`);
         } else if (status.status === "unreleased") {
@@ -301,6 +302,41 @@
     } finally {
       if (!silent) busy = "";
     }
+  }
+
+  async function downloadUpdate() {
+    busy = "update-download";
+    try {
+      const status = await AppService.DownloadUpdate();
+      if (snapshot) snapshot.update = status;
+      if (status.status === "ready") notify("ok", "更新已下载", `v${status.latestVersion} 已通过 SHA-256 校验`);
+      else notify("info", "正在下载更新", `v${status.latestVersion}`);
+    } catch (error) {
+      notify("error", "下载更新失败", errorText(error));
+    } finally {
+      busy = "";
+    }
+  }
+
+  async function restartUpdate() {
+    modal = {
+      title: "重启并更新 Codex Lane？",
+      body: "程序会先替换自身，再自动重新启动。Codex 不会被结束，但经过 Lane 的请求会短暂中断几秒。",
+      note: "如果新版本无法启动，旧版本会自动回滚；当前配置、日志和代理档案不会受影响。",
+      confirm: "重启并更新",
+      action: async () => {
+        busy = "update-restart";
+        try {
+          const status = await AppService.RestartToUpdate();
+          if (snapshot) snapshot.update = status;
+        } catch (error) {
+          notify("error", "更新安装失败", errorText(error));
+          await load(false);
+        } finally {
+          busy = "";
+        }
+      },
+    };
   }
 
   async function openProjectPage(target: "repository" | "releases") {
@@ -427,6 +463,15 @@
       snapshot.events = [entry, ...(snapshot.events ?? [])].slice(0, 30);
       if (payload.kind === "error") notify("error", payload.title, payload.detail);
     });
+    const offUpdate = Events.On("lane:update", (event: { data: UpdateStatus }) => {
+      const status = event?.data;
+      if (!status || !snapshot) return;
+      snapshot.update = status;
+      if (status.status === "ready" && status.latestVersion !== readyUpdateNotified) {
+        readyUpdateNotified = status.latestVersion;
+        notify("ok", `更新 v${status.latestVersion} 已就绪`, "可在设置页的「关于」中重启更新");
+      }
+    });
 
     const timer = window.setInterval(() => {
       if (polling && !busy) load(false);
@@ -437,6 +482,7 @@
       window.clearInterval(timer);
       if (typeof offRequest === "function") offRequest();
       if (typeof offEvent === "function") offEvent();
+      if (typeof offUpdate === "function") offUpdate();
     };
   });
 
@@ -474,8 +520,8 @@
       <div class="app-actions">
         {#if snapshot.update?.available}
           <button class="update-badge" title={`发现新版本 v${snapshot.update.latestVersion}`} onclick={openAbout}>
-            <Icon name="download" size={14} />
-            <span>更新 <b>v{snapshot.update.latestVersion}</b></span>
+            <Icon name={snapshot.update.status === "ready" ? "power" : "download"} size={14} />
+            <span>{snapshot.update.status === "ready" ? "更新就绪" : snapshot.update.status === "downloading" ? "正在下载" : "更新"} <b>v{snapshot.update.latestVersion}</b></span>
           </button>
         {/if}
         <span class={`run-state ${runStateClass}`}><i class="live-dot"></i><span>{runStateLabel}</span></span>
@@ -510,6 +556,8 @@
           onSave={saveSettings}
           onProbe={probe}
           onCheckUpdate={checkForUpdates}
+          onDownloadUpdate={downloadUpdate}
+          onRestartUpdate={restartUpdate}
           onOpenProject={openProjectPage}
           onOpenConfigFolder={openConfigFolder}
           onSwitchUpstream={switchUpstream}

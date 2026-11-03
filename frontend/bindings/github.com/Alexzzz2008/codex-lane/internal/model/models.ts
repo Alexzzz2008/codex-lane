@@ -257,6 +257,9 @@ export interface UpdateStatus {
     "releaseUrl": string;
     "publishedAt": string;
     "checkedAt": string;
+    "notes": string;
+    "downloaded": number;
+    "total": number;
     "error": string;
 }
 

@@ -1,10 +1,12 @@
 # 发布清单
 
-Codex Lane 的首个发布形态是 Windows x64 单文件便携版：
+Codex Lane 的发布形态是 Windows x64 单文件便携版：
 
 - `CodexLane.exe`
 - `CodexLane-<version>-win-x64.zip`
+- `CodexLane-windows-amd64.exe`
 - `SHA256SUMS.txt`
+- `latest.json`
 
 不包含安装器、服务、驱动或后台常驻组件。NSIS/MSIX 仍然可以后续增加，
 但发布主产物始终保留单 exe。
@@ -30,7 +32,7 @@ pwsh -File scripts/release.ps1
 2. Vite 生产构建，把前端资源嵌入 exe。
 3. 重新生成 Wails TypeScript 绑定和 Windows 图标/版本资源。
 4. 使用 `CGO_ENABLED=0`、`-trimpath`、`-tags production` 构建 x64 单文件。
-5. 生成 `dist/CodexLane-<version>-win-x64.zip` 与 `dist/SHA256SUMS.txt`。
+5. 生成自动更新直装 exe、便携 zip、`SHA256SUMS.txt` 与 `latest.json`。
 
 已经构建过 `bin/CodexLane.exe` 时，可以只重新打包：
 
@@ -61,9 +63,15 @@ pwsh -File scripts/release.ps1 -SkipBuild
 
 1. 提交并推送版本变更。
 2. 创建与版本一致的 tag，例如 `v0.1.0`。
-3. 新建 GitHub Release，附上 `dist` 下的 zip 和 `SHA256SUMS.txt`。
-4. 把 Release 标记为 Latest；应用的「关于」页会从
-   `https://github.com/Alexzzz2008/codex-lane/releases.atom` 读取最新版本。
+3. 新建 GitHub Release，上传 `dist` 下的直装 exe、zip、`SHA256SUMS.txt` 和 `latest.json`。
+4. 把 Release 标记为 Latest；应用会从
+   `https://github.com/Alexzzz2008/codex-lane/releases/latest/download/latest.json`
+   读取版本、下载地址、大小和 SHA-256。
+
+更新包下载到 `%LOCALAPPDATA%\CodexLane\updates`，校验通过后才能安装。
+Windows 上会先把当前 exe 改名为 `.old`，放入新版本后启动新进程；新进程等待
+旧进程退出再打开窗口和 Lane 端口。启动失败时自动恢复 `.old`，下次启动会清理
+已退出的旧版本文件。
 
 更新检查只读取公开 Release。仓库保持私有时，应用会明确显示“无法检查”，
 但不会影响代理、请求日志或自检功能。

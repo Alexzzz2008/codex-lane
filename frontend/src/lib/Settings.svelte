@@ -3,7 +3,7 @@
   import type { Dependency, SettingsInput, Snapshot, UpdateStatus, UpstreamProbeResult, UpstreamStatus } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
   import { AppService } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/appservice";
   import Icon from "./Icon.svelte";
-  import { clockDate, formatDuration, upstreamProtocol } from "./format";
+  import { clockDate, clampPercent, formatBytes, formatDuration, upstreamProtocol } from "./format";
 
   let {
     snapshot,
@@ -11,6 +11,8 @@
     onSave,
     onProbe,
     onCheckUpdate,
+    onDownloadUpdate,
+    onRestartUpdate,
     onOpenProject,
     onOpenConfigFolder,
     onSwitchUpstream,
@@ -21,6 +23,8 @@
     onSave: (input: SettingsInput) => Promise<boolean>;
     onProbe: (input: SettingsInput) => Promise<UpstreamStatus | null>;
     onCheckUpdate: (silent?: boolean) => Promise<UpdateStatus | null>;
+    onDownloadUpdate: () => Promise<void>;
+    onRestartUpdate: () => Promise<void>;
     onOpenProject: (target: "repository" | "releases") => Promise<void>;
     onOpenConfigFolder: () => Promise<void>;
     onSwitchUpstream: (name: string) => Promise<void>;
@@ -436,6 +440,15 @@
     switch (status?.status) {
       case "available":
         return `发现 v${status.latestVersion}`;
+      case "downloading":
+        return `下载 ${updatePercent(status)}%`;
+      case "ready":
+        return "可更新";
+      case "installing":
+      case "restarting":
+        return "安装中";
+      case "checking":
+        return "检查中";
       case "current":
         return "已是最新";
       case "unreleased":
@@ -452,6 +465,10 @@
   function updateTone(status: UpdateStatus | null | undefined): string {
     switch (status?.status) {
       case "available":
+      case "downloading":
+      case "ready":
+      case "installing":
+      case "restarting":
         return "run";
       case "current":
         return "pass";
@@ -469,12 +486,26 @@
       return "启动后会自动检查 GitHub Releases，也可以手动检查。";
     }
     if (status.status === "available") {
-      return `当前 v${status.currentVersion}，新版本 v${status.latestVersion} 已发布。`;
+      return `当前 v${status.currentVersion}，新版本 v${status.latestVersion} 已发布，正在后台下载。`;
+    }
+    if (status.status === "downloading") {
+      return `正在下载 v${status.latestVersion} · ${formatBytes(status.downloaded)} / ${formatBytes(status.total)}`;
+    }
+    if (status.status === "ready") {
+      return `v${status.latestVersion} 已下载并通过 SHA-256 校验。重启时通道会短暂中断，Codex 不会被结束。`;
+    }
+    if (status.status === "installing" || status.status === "restarting") {
+      return "正在替换程序并重新启动，旧版本会在失败时自动回滚。";
     }
     if (status.status === "current") {
       return `当前 v${status.currentVersion} 已是频道内最新版本。`;
     }
     return status.error || "暂时无法读取发布信息。";
+  }
+
+  function updatePercent(status: UpdateStatus | null | undefined): number {
+    if (!status?.total) return 0;
+    return Math.round(clampPercent((status.downloaded / status.total) * 100));
   }
 
   async function checkUpdates() {
@@ -820,7 +851,7 @@
         </button>
         <div class="about-update">
           <div class="about-update-head">
-            <div><b>更新检查</b><span>通过 GitHub Releases 获取版本信息，不经过 Lane。</span></div>
+            <div><b>更新检查</b><span>通过当前上游代理访问 GitHub Releases，不经过 Lane。</span></div>
             <span class={`result-pill ${updateTone(snapshot.update)}`}>{updateLabel(snapshot.update)}</span>
           </div>
           <p>{updateDetail(snapshot.update)}</p>
@@ -828,10 +859,23 @@
             <span class="about-checked">上次检查 · {clockDate(snapshot.update.checkedAt)}</span>
           {/if}
           <div class="about-update-actions">
-            <button class="btn small" onclick={checkUpdates} disabled={busy === "update"}>
+            <button class="btn small" onclick={checkUpdates} disabled={busy === "update" || busy === "update-download" || busy === "update-restart"}>
               {#if busy === "update"}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="refresh" size={13} />{/if}
               检查更新
             </button>
+            {#if snapshot.update?.status === "ready"}
+              <button class="btn small dark" onclick={onRestartUpdate} disabled={busy === "update-restart"}>
+                {#if busy === "update-restart"}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="power" size={13} />{/if}
+                重启并更新
+              </button>
+            {:else if snapshot.update?.status === "downloading"}
+              <button class="btn small" disabled><span class="spin"><Icon name="download" size={13} /></span>下载 {updatePercent(snapshot.update)}%</button>
+            {:else if snapshot.update?.available}
+              <button class="btn small" onclick={onDownloadUpdate} disabled={busy === "update-download"}>
+                {#if busy === "update-download"}<span class="spin"><Icon name="download" size={13} /></span>{:else}<Icon name="download" size={13} />{/if}
+                下载更新
+              </button>
+            {/if}
             {#if snapshot.update?.available}
               <button class="btn small dark" onclick={() => onOpenProject("releases")}><Icon name="download" size={13} />打开 Release</button>
             {/if}

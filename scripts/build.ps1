@@ -8,6 +8,10 @@ $root = Split-Path -Parent $PSScriptRoot
 $serviceFile = Join-Path $root "internal/appservice/service.go"
 $infoFile = Join-Path $root "build/windows/info.json"
 
+if (($env:PATHEXT -split ";") -notcontains ".EXE") {
+    $env:PATHEXT = ".COM;.EXE;.BAT;.CMD;.VBS;.VBE;.JS;.JSE;.WSF;.WSH;.MSC"
+}
+
 function Assert-WindowsGui([string]$Path) {
     $stream = [System.IO.File]::OpenRead($Path)
     try {

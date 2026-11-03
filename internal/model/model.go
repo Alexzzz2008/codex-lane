@@ -270,6 +270,9 @@ type UpdateStatus struct {
 	ReleaseURL     string `json:"releaseUrl"`
 	PublishedAt    string `json:"publishedAt"`
 	CheckedAt      string `json:"checkedAt"`
+	Notes          string `json:"notes"`
+	Downloaded     int64  `json:"downloaded"`
+	Total          int64  `json:"total"`
 	Error          string `json:"error"`
 }
 

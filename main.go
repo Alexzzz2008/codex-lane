@@ -14,6 +14,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/config"
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 	"github.com/Alexzzz2008/codex-lane/internal/platform"
+	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 	"github.com/wailsapp/wails/v3/pkg/application"
 	"github.com/wailsapp/wails/v3/pkg/events"
 )
@@ -43,6 +44,11 @@ func main() {
 	if err := platform.EnsureWebView2(); err != nil {
 		os.Exit(1)
 	}
+	selfupdate.ReportStarted()
+	selfupdate.WaitForPredecessor()
+	if executable, err := selfupdate.Executable(); err == nil {
+		selfupdate.CleanupOld(executable)
+	}
 
 	minimizeToTray := loadMinimizeToTray()
 	service := appservice.New()
@@ -71,6 +77,9 @@ func main() {
 	})
 	service.SetEmitter(func(name string, data ...any) {
 		app.Event.Emit(name, data...)
+	})
+	service.SetQuit(func() {
+		app.Quit()
 	})
 
 	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
