@@ -19,7 +19,7 @@
     snapshot: Snapshot;
     busy?: string;
     onSave: (input: SettingsInput) => Promise<boolean>;
-    onProbe: () => Promise<UpstreamStatus | null>;
+    onProbe: (input: SettingsInput) => Promise<UpstreamStatus | null>;
     onCheckUpdate: (silent?: boolean) => Promise<UpdateStatus | null>;
     onOpenProject: (target: "repository" | "releases") => Promise<void>;
     onOpenConfigFolder: () => Promise<void>;
@@ -229,6 +229,38 @@
     dirty = true;
   }
 
+  function updateTopField(field: "protocol" | "host" | "port", value: string | number) {
+    if (field === "protocol") draft.protocol = String(value);
+    if (field === "host") draft.host = String(value);
+    if (field === "port") draft.port = Number(value);
+    const active = draft.activeUpstream;
+    if (active) {
+      draft.upstreams = profiles.map((profile) =>
+        profile.name === active
+          ? { ...profile, protocol: draft.protocol, host: draft.host, port: draft.port }
+          : profile,
+      );
+    }
+    touch();
+  }
+
+  function updateProfile(
+    index: number,
+    patch: Partial<{ name: string; protocol: string; host: string; port: number }>,
+  ) {
+    const current = profiles[index];
+    const active = current?.name === draft.activeUpstream;
+    draft.upstreams = profiles.map((profile, itemIndex) =>
+      itemIndex === index ? { ...profile, ...patch } : profile,
+    );
+    if (!active) return touch();
+    if (patch.name !== undefined) draft.activeUpstream = patch.name;
+    if (patch.protocol !== undefined) draft.protocol = patch.protocol;
+    if (patch.host !== undefined) draft.host = patch.host;
+    if (patch.port !== undefined) draft.port = patch.port;
+    touch();
+  }
+
   function scheduleAutoSave() {
     dirty = true;
     if (saveTimer) window.clearTimeout(saveTimer);
@@ -278,7 +310,7 @@
 
   async function testUpstream() {
     probe = null;
-    probe = await onProbe();
+    probe = await onProbe(prunedDraft());
   }
 
   function cancel() {
@@ -468,7 +500,7 @@
         <div class="setting-row">
           <div class="setting-copy"><b>上游协议</b><span>支持 HTTP、HTTPS 与 SOCKS5；不保存用户名和密码。</span></div>
           <div class="setting-control">
-            <select class="native-select" bind:value={draft.protocol} onchange={touch} aria-label="上游协议">
+            <select class="native-select" value={draft.protocol} onchange={(event) => updateTopField("protocol", event.currentTarget.value)} aria-label="上游协议">
               <option value="http">HTTP</option>
               <option value="https">HTTPS</option>
               <option value="socks5">SOCKS5</option>
@@ -478,8 +510,8 @@
         <div class="setting-row">
           <div class="setting-copy"><b>上游地址</b><span>本机 Clash、Mihomo 或其他代理服务的监听地址。</span></div>
           <div class="setting-control">
-            <input class="text-input" style="width:132px" bind:value={draft.host} oninput={touch} aria-label="上游地址" />
-            <input class="text-input" style="width:88px" type="number" min="1" max="65535" bind:value={draft.port} oninput={touch} aria-label="上游端口" />
+            <input class="text-input" style="width:132px" value={draft.host} oninput={(event) => updateTopField("host", event.currentTarget.value)} aria-label="上游地址" />
+            <input class="text-input" style="width:88px" type="number" min="1" max="65535" value={draft.port} oninput={(event) => updateTopField("port", event.currentTarget.value)} aria-label="上游端口" />
             <button class="btn small" onclick={testUpstream} disabled={busy === "probe"}>
               {#if busy === "probe"}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}
               测试
@@ -516,16 +548,16 @@
         <div class="panel-head"><div><h2 class="panel-title">上游档案</h2><p class="panel-sub">保存多套代理地址，一键启用或自动选最快；启用会立即重启 Lane。</p></div></div>
         <div class="entry-list">
           <div class="entry-head grid-profiles"><span>档案名称</span><span>协议</span><span>地址</span><span>端口</span><span>操作</span></div>
-          {#each profiles as profile, index (profile.name)}
+          {#each profiles as profile, index (index)}
             <div class="entry-row grid-profiles">
-              <input class="text-input" bind:value={profile.name} oninput={touch} aria-label="档案名称" />
-              <select class="native-select" bind:value={profile.protocol} onchange={touch} aria-label="档案协议">
+              <input class="text-input" value={profile.name} oninput={(event) => updateProfile(index, { name: event.currentTarget.value })} aria-label="档案名称" />
+              <select class="native-select" value={profile.protocol} onchange={(event) => updateProfile(index, { protocol: event.currentTarget.value })} aria-label="档案协议">
                 <option value="http">HTTP</option>
                 <option value="https">HTTPS</option>
                 <option value="socks5">SOCKS5</option>
               </select>
-              <input class="text-input" bind:value={profile.host} oninput={touch} aria-label="档案地址" />
-              <input class="text-input" type="number" min="1" max="65535" bind:value={profile.port} oninput={touch} aria-label="档案端口" />
+              <input class="text-input" value={profile.host} oninput={(event) => updateProfile(index, { host: event.currentTarget.value })} aria-label="档案地址" />
+              <input class="text-input" type="number" min="1" max="65535" value={profile.port} oninput={(event) => updateProfile(index, { port: Number(event.currentTarget.value) })} aria-label="档案端口" />
               <div class="entry-actions">
                 {#if speedByName.get(profile.name)}
                   {@const result = speedByName.get(profile.name)}

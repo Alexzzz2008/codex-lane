@@ -13,7 +13,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 )
 
-const maxLogSize = 32 << 20
+var maxLogSize = int64(32) << 20
 
 type Store struct {
 	mu      sync.RWMutex
@@ -163,6 +163,9 @@ func (s *Store) append(record model.RequestRecord) {
 	}
 	if s.logSize > 0 && s.logSize+int64(len(data)) > maxLogSize {
 		s.rotateLogFileLocked()
+		if err := s.ensureLogFileLocked(); err != nil {
+			return
+		}
 	}
 	written, err := s.logFile.Write(data)
 	if err == nil {

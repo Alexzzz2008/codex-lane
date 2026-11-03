@@ -203,6 +203,8 @@ func (s *AppService) runTests(ctx context.Context) model.TestReport {
 	proxyTarget := strings.ToLower(snapshot.Lane.InterfaceURL)
 	if !snapshot.Codex.Running {
 		add("C1", groupC, "Codex 主进程", "SKIP", "Codex 当前未运行", 0, "通过 Lane 启动 Codex 后重试")
+	} else if s.selfTest {
+		add("C1", groupC, "Codex 主进程", "SKIP", "自检使用临时入口，跳过进程代理匹配", 0, "在桌面端查看 Codex 接入状态")
 	} else if snapshot.Codex.ProxyMatched && strings.Contains(strings.ToLower(snapshot.Codex.CommandLine), proxyTarget) {
 		add("C1", groupC, "Codex 主进程", "PASS", fmt.Sprintf("PID %d · 代理参数指向 Lane", snapshot.Codex.MainPID), 0, "")
 	} else {

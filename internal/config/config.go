@@ -323,10 +323,14 @@ func ApplySettings(cfg *model.Config, in model.SettingsInput) error {
 	active := strings.TrimSpace(in.ActiveUpstream)
 	cfg.Upstreams = profiles
 	cfg.ActiveUpstream = active
-	if profile := findProfile(profiles, active); profile != nil {
-		cfg.Upstream.Protocol = profile.Protocol
-		cfg.Upstream.Host = profile.Host
-		cfg.Upstream.Port = profile.Port
+	if index := findProfileIndex(profiles, active); index >= 0 {
+		profiles[index].Protocol = strings.ToLower(strings.TrimSpace(in.Protocol))
+		profiles[index].Host = strings.TrimSpace(in.Host)
+		profiles[index].Port = in.Port
+		cfg.Upstreams = profiles
+		cfg.Upstream.Protocol = profiles[index].Protocol
+		cfg.Upstream.Host = profiles[index].Host
+		cfg.Upstream.Port = profiles[index].Port
 	} else {
 		cfg.Upstream.Protocol = strings.ToLower(strings.TrimSpace(in.Protocol))
 		cfg.Upstream.Host = strings.TrimSpace(in.Host)
@@ -359,16 +363,16 @@ func ApplySettings(cfg *model.Config, in model.SettingsInput) error {
 	return Validate(*cfg)
 }
 
-func findProfile(profiles []model.UpstreamProfile, name string) *model.UpstreamProfile {
+func findProfileIndex(profiles []model.UpstreamProfile, name string) int {
 	if name == "" {
-		return nil
+		return -1
 	}
 	for index := range profiles {
 		if profiles[index].Name == name {
-			return &profiles[index]
+			return index
 		}
 	}
-	return nil
+	return -1
 }
 
 func trimPatterns(patterns []string) []string {

@@ -23,7 +23,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/preflight"
 )
 
-const Version = "0.1.24"
+const Version = "0.1.30"
 
 type Emitter func(name string, data ...any)
 
@@ -53,6 +53,7 @@ type AppService struct {
 	updateStatus      model.UpdateStatus
 	lastProbe         time.Time
 	testRunning       atomic.Bool
+	selfTest          bool
 }
 
 func New() *AppService {
@@ -144,10 +145,13 @@ func (s *AppService) PrepareSelfTest(ctx context.Context) error {
 		cfg = config.Default()
 		s.initError = cfgErr.Error()
 	}
+	cfg.Lane.InterfacePort = 0
+	cfg.Lane.KernelPort = 0
 	s.mu.Lock()
 	s.ctx = ctx
 	s.paths = paths
 	s.cfg = cfg
+	s.selfTest = true
 	s.store = observe.NewStore(cfg.Logging.MaxMemoryRows, paths.LogDirectory, nil)
 	s.mu.Unlock()
 	return s.StartLane()
@@ -305,6 +309,10 @@ func (s *AppService) startLane(cfg model.Config) error {
 
 func (s *AppService) persistLanePorts(lane *gateway.Server) {
 	s.mu.Lock()
+	if s.selfTest {
+		s.mu.Unlock()
+		return
+	}
 	if s.cfg.Lane.InterfacePort == lane.InterfacePort() && s.cfg.Lane.KernelPort == lane.KernelPort() {
 		s.mu.Unlock()
 		return
@@ -463,8 +471,11 @@ func (s *AppService) StopCodex() (model.Snapshot, error) {
 	return s.Refresh()
 }
 
-func (s *AppService) ProbeProxy() model.UpstreamStatus {
+func (s *AppService) ProbeProxy(input model.SettingsInput) model.UpstreamStatus {
 	cfg := s.currentConfig()
+	cfg.Upstream.Protocol = strings.ToLower(strings.TrimSpace(input.Protocol))
+	cfg.Upstream.Host = strings.TrimSpace(input.Host)
+	cfg.Upstream.Port = input.Port
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return s.probeUpstream(ctx, cfg)

@@ -8,6 +8,23 @@ $root = Split-Path -Parent $PSScriptRoot
 $serviceFile = Join-Path $root "internal/appservice/service.go"
 $infoFile = Join-Path $root "build/windows/info.json"
 
+function Assert-WindowsGui([string]$Path) {
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $reader = New-Object System.IO.BinaryReader($stream)
+        $stream.Position = 0x3C
+        $peOffset = $reader.ReadInt32()
+        $stream.Position = $peOffset + 24 + 68
+        $subsystem = $reader.ReadUInt16()
+        if ($subsystem -ne 2) {
+            throw "Expected Windows GUI subsystem (2), got $subsystem for $Path"
+        }
+    }
+    finally {
+        $stream.Dispose()
+    }
+}
+
 $match = Select-String -Path $serviceFile -Pattern 'const Version = "([^"]+)"' | Select-Object -First 1
 if (-not $match) {
     throw "Cannot find the application version in $serviceFile"
@@ -53,14 +70,22 @@ foreach ($tool in @("npm", "wails3", "go")) {
 
 Push-Location (Join-Path $root "frontend")
 try {
-    if (-not (Test-Path "node_modules/.bin/vite.cmd")) {
-        npm ci
-        if ($LASTEXITCODE -ne 0) { throw "npm ci failed with exit code $LASTEXITCODE" }
+    if (Test-Path "node_modules/.bin/vite.cmd") {
+        npm run check
+        if ($LASTEXITCODE -ne 0) { throw "npm run check failed with exit code $LASTEXITCODE" }
+        npm run build
+        if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
     }
-    npm run check
-    if ($LASTEXITCODE -ne 0) { throw "npm run check failed with exit code $LASTEXITCODE" }
-    npm run build
-    if ($LASTEXITCODE -ne 0) { throw "npm run build failed with exit code $LASTEXITCODE" }
+    else {
+        $wsl = Get-Command wsl.exe -ErrorAction SilentlyContinue
+        if (-not $wsl) {
+            throw "Windows npm shims are missing and WSL is unavailable; reinstall frontend dependencies"
+        }
+        $drive = $root.Substring(0, 1).ToLowerInvariant()
+        $frontendPath = "/mnt/$drive" + $root.Substring(2).Replace('\', '/') + "/frontend"
+        wsl.exe bash -lc "cd '$frontendPath' && npm run check && npm run build"
+        if ($LASTEXITCODE -ne 0) { throw "WSL npm build failed with exit code $LASTEXITCODE" }
+    }
 }
 finally {
     Pop-Location
@@ -88,6 +113,7 @@ try {
     go build -tags production -trimpath -buildvcs=false `
         -ldflags="-w -s -H windowsgui" -o $versionedExe .
     if ($LASTEXITCODE -ne 0) { throw "go build failed with exit code $LASTEXITCODE" }
+    Assert-WindowsGui $versionedExe
 }
 finally {
     Pop-Location

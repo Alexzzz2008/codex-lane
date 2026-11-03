@@ -89,7 +89,11 @@ func (s *AppService) checkCodexDrift(driftCount *int, alerted bool) bool {
 	s.mu.RLock()
 	codex := s.cachedCodex
 	s.mu.RUnlock()
-	if !codex.Running || !codex.ProxyMatched {
+	if !codex.Running {
+		*driftCount = 0
+		return false
+	}
+	if !codex.ProxyMatched {
 		*driftCount++
 		if *driftCount >= codexDriftThreshold && !alerted {
 			s.addEvent("warn", "Codex 未接入当前 Lane", "Codex 进程的代理参数与本地入口不一致，可尝试重新打开 Codex 接入")

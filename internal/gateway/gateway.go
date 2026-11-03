@@ -260,6 +260,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		record.LatencyMs = time.Since(started).Milliseconds()
 		record.DurationMs = record.LatencyMs
 		record.FinishedAt = time.Now().Format(time.RFC3339Nano)
+		s.emit("request:new", record)
 		s.emitFinished(record)
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
@@ -370,6 +371,7 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 		record.LatencyMs = time.Since(started).Milliseconds()
 		record.DurationMs = record.LatencyMs
 		record.FinishedAt = time.Now().Format(time.RFC3339Nano)
+		s.emit("request:new", record)
 		s.emitFinished(record)
 		http.Error(w, "Codex Lane: host is not in the allowlist", http.StatusForbidden)
 		return

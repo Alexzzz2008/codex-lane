@@ -339,10 +339,10 @@
     }
   }
 
-  async function probe(): Promise<UpstreamStatus | null> {
+  async function probe(input: SettingsInput): Promise<UpstreamStatus | null> {
     busy = "probe";
     try {
-      const result = await AppService.ProbeProxy();
+      const result = await AppService.ProbeProxy(input);
       const domains = result.domains ?? [];
       const reachable = domains.filter((item) => item.ok).length;
       notify(

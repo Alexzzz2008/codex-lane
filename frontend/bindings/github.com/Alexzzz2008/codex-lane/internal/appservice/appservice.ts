@@ -65,8 +65,8 @@ export function ProbeAllUpstreams(): $CancellablePromise<model$0.UpstreamProbeRe
     return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ProbeAllUpstreams");
 }
 
-export function ProbeProxy(): $CancellablePromise<model$0.UpstreamStatus> {
-    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ProbeProxy");
+export function ProbeProxy(input: model$0.SettingsInput): $CancellablePromise<model$0.UpstreamStatus> {
+    return $Call.ByName("github.com/Alexzzz2008/codex-lane/internal/appservice.AppService.ProbeProxy", input);
 }
 
 export function Refresh(): $CancellablePromise<model$0.Snapshot> {
