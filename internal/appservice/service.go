@@ -24,7 +24,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.35"
+const Version = "0.1.36"
 
 type Emitter func(name string, data ...any)
 
@@ -47,6 +47,7 @@ type AppService struct {
 	lastCodexLaunch       time.Time
 	cachedPackage         codex.PackageInfo
 	cachedCodex           model.CodexStatus
+	codexDirty            bool
 	cachedDeps            []model.Dependency
 	cachedWSL             model.WSLStatus
 	cachedEngine          model.ResolvedEngine
@@ -99,6 +100,7 @@ func (s *AppService) startup(ctx context.Context) error {
 	s.ctx = ctx
 	s.paths = paths
 	s.cfg = cfg
+	s.codexDirty = true
 	s.store = observe.NewStore(cfg.Logging.MaxMemoryRows, paths.LogDirectory, nil)
 	s.mu.Unlock()
 	s.addEvent("info", "Codex Lane 已启动", "本地控制台已就绪")
@@ -421,6 +423,7 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 		}
 		s.mu.Lock()
 		s.lastCodexCheck = time.Time{}
+		s.codexDirty = true
 		s.mu.Unlock()
 		s.addEvent("info", "Codex 已停止", "等待重新注入代理参数")
 	}
@@ -440,6 +443,7 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 	s.addEvent("ok", "Codex 已启动", "PID "+fmt.Sprint(result.PID)+" · "+engine.Resolved)
 	s.mu.Lock()
 	s.lastCodexCheck = time.Time{}
+	s.codexDirty = true
 	s.lastCodexLaunch = time.Now()
 	s.mu.Unlock()
 	return result, nil
@@ -479,6 +483,7 @@ func (s *AppService) StopCodex() (model.Snapshot, error) {
 	}
 	s.mu.Lock()
 	s.lastCodexCheck = time.Time{}
+	s.codexDirty = true
 	s.mu.Unlock()
 	s.addEvent("info", "Codex 已停止", "未修改系统网络设置")
 	return s.Refresh()

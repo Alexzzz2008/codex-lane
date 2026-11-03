@@ -18,6 +18,18 @@ import (
 
 const codexStatusTTL = 2 * time.Second
 
+// consumeCodexDirty reports whether the Codex process set changed since the
+// last snapshot, so the expensive command-line query only runs on real changes.
+func (s *AppService) consumeCodexDirty() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.codexDirty {
+		return false
+	}
+	s.codexDirty = false
+	return true
+}
+
 func (s *AppService) snapshot(ctx context.Context, deep bool) model.Snapshot {
 	return s.snapshotWith(ctx, deep, true)
 }
@@ -69,18 +81,24 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 		}
 	}
 	if pkg.InstallLocation != "" && (deep || time.Since(s.lastCodexCheck) >= codexStatusTTL) {
-		processes, processErr := codex.ListProcesses(ctx, pkg.InstallLocation)
-		if processErr != nil {
-			codexStatus = pkg.Status()
-			codexStatus.Error = processErr.Error()
+		if !deep && !s.selfTest && !s.consumeCodexDirty() {
+			s.mu.Lock()
+			s.lastCodexCheck = time.Now()
+			s.mu.Unlock()
 		} else {
-			codexStatus = codex.StatusWithProcesses(pkg, processes)
+			processes, processErr := codex.ListProcesses(ctx, pkg.InstallLocation)
+			if processErr != nil {
+				codexStatus = pkg.Status()
+				codexStatus.Error = processErr.Error()
+			} else {
+				codexStatus = codex.StatusWithProcesses(pkg, processes)
+			}
+			s.mu.Lock()
+			s.cachedPackage = pkg
+			s.cachedCodex = codexStatus
+			s.lastCodexCheck = time.Now()
+			s.mu.Unlock()
 		}
-		s.mu.Lock()
-		s.cachedPackage = pkg
-		s.cachedCodex = codexStatus
-		s.lastCodexCheck = time.Now()
-		s.mu.Unlock()
 	}
 
 	wslStatus := cachedWSL
