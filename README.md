@@ -77,6 +77,4 @@ pwsh -File scripts/build.ps1
 |---|---|
 | ![请求日志](docs/screenshots/requests.png) | ![检查](docs/screenshots/checks.png) |
 
-| 设置 | 关于 |
-|---|---|
-| ![设置](docs/screenshots/settings.png) | ![关于](docs/screenshots/about.png) |
+![设置](docs/screenshots/settings.png)
