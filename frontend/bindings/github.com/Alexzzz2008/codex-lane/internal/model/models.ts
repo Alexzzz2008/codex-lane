@@ -176,7 +176,6 @@ export interface Settings {
     "wslDistro": string;
     "openCodex": boolean;
     "stopCodexOnExit": boolean;
-    "adoptCodex": boolean;
     "retentionDays": number;
     "maxMemoryRows": number;
     "upstreams": UpstreamProfile[] | null;
@@ -198,7 +197,6 @@ export interface SettingsInput {
     "wslDistro": string;
     "openCodex": boolean;
     "stopCodexOnExit": boolean;
-    "adoptCodex": boolean;
     "retentionDays": number;
     "maxMemoryRows": number;
     "upstreams": UpstreamProfile[] | null;

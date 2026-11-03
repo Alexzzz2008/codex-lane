@@ -40,7 +40,6 @@
     wslDistro: "",
     openCodex: false,
     stopCodexOnExit: false,
-    adoptCodex: true,
     retentionDays: 14,
     maxMemoryRows: 10000,
     upstreams: [],
@@ -63,7 +62,6 @@
       wslDistro: value.settings.wslDistro,
       openCodex: value.settings.openCodex,
       stopCodexOnExit: value.settings.stopCodexOnExit,
-      adoptCodex: value.settings.adoptCodex,
       retentionDays: value.settings.retentionDays,
       maxMemoryRows: value.settings.maxMemoryRows,
       upstreams: value.settings.upstreams ?? [],
@@ -157,7 +155,6 @@
     "wslDistro",
     "openCodex",
     "stopCodexOnExit",
-    "adoptCodex",
     "retentionDays",
     "maxMemoryRows",
     "upstreams",
@@ -795,10 +792,6 @@
         <div class="setting-row">
           <div class="setting-copy"><b>退出 Lane 时同步停止 Codex</b><span>只处理当前检测到的主进程，不影响其他应用。</span></div>
           <div class="setting-control"><button class:off={!draft.stopCodexOnExit} class="switch" aria-label="退出 Lane 时同步停止 Codex" onclick={() => { draft.stopCodexOnExit = !draft.stopCodexOnExit; scheduleAutoSave(); }}></button></div>
-        </div>
-        <div class="setting-row">
-          <div class="setting-copy"><b>自动接管原生启动的 Codex</b><span>从开始菜单或桌面图标打开 Codex 时，检测到未经过 Lane 就自动重启接入；运行中的会话会被重启。</span></div>
-          <div class="setting-control"><button class:off={!draft.adoptCodex} class="switch" aria-label="自动接管原生启动的 Codex" onclick={() => { draft.adoptCodex = !draft.adoptCodex; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>关闭窗口时最小化到托盘</b><span>点关闭按钮隐藏到系统托盘，从托盘菜单退出；重启应用后生效。</span></div>

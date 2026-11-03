@@ -27,6 +27,7 @@ var assets embed.FS
 var trayIcon []byte
 
 func main() {
+	platform.EnsureSelfVisible()
 	if commandLineRequested(os.Args[1:]) {
 		platform.PrepareConsole()
 		if hasArgument(os.Args[1:], "selftest") {

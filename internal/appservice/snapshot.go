@@ -18,18 +18,6 @@ import (
 
 const codexStatusTTL = 2 * time.Second
 
-// consumeCodexDirty reports whether the Codex process set changed since the
-// last snapshot, so the expensive command-line query only runs on real changes.
-func (s *AppService) consumeCodexDirty() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.codexDirty {
-		return false
-	}
-	s.codexDirty = false
-	return true
-}
-
 func (s *AppService) snapshot(ctx context.Context, deep bool) model.Snapshot {
 	return s.snapshotWith(ctx, deep, true)
 }
@@ -81,7 +69,10 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 		}
 	}
 	if pkg.InstallLocation != "" && (deep || time.Since(s.lastCodexCheck) >= codexStatusTTL) {
-		if !deep && !s.selfTest && !s.consumeCodexDirty() {
+		live := platform.ProcessIDs("ChatGPT.exe", "Codex.exe")
+		liveKey := platform.PIDSetKey(live)
+		unchanged := codexStatus.Running == (len(live) > 0) && liveKey == s.cachedCodexPIDs
+		if !deep && unchanged {
 			s.mu.Lock()
 			s.lastCodexCheck = time.Now()
 			s.mu.Unlock()
@@ -96,6 +87,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 			s.mu.Lock()
 			s.cachedPackage = pkg
 			s.cachedCodex = codexStatus
+			s.cachedCodexPIDs = liveKey
 			s.lastCodexCheck = time.Now()
 			s.mu.Unlock()
 		}
