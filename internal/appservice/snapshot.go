@@ -150,6 +150,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 		Version:       Version,
 		RepositoryURL: RepositoryURL,
 		ReleasesURL:   ReleasesURL,
+		Install:       installState(),
 		Settings:      config.Settings(cfg),
 		Lane:          laneStatus,
 		Upstream:      upstream,

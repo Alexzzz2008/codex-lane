@@ -81,6 +81,18 @@ export interface HistoryPoint {
     "latencyMs": number;
 }
 
+/**
+ * InstallState describes where the running build lives, which decides whether
+ * self updates can replace it without disturbing the desktop icon layout.
+ */
+export interface InstallState {
+    "managed": boolean;
+    "executable": string;
+    "installPath": string;
+    "shortcutPath": string;
+    "shortcut": boolean;
+}
+
 export interface LaneStatus {
     "running": boolean;
     "interfaceUrl": string;
@@ -213,6 +225,7 @@ export interface Snapshot {
     "version": string;
     "repositoryUrl": string;
     "releasesUrl": string;
+    "install": InstallState;
     "settings": Settings;
     "lane": LaneStatus;
     "upstream": UpstreamStatus;

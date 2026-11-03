@@ -13,6 +13,7 @@ import (
 
 	"github.com/Alexzzz2008/codex-lane/internal/appservice"
 	"github.com/Alexzzz2008/codex-lane/internal/config"
+	"github.com/Alexzzz2008/codex-lane/internal/install"
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 	"github.com/Alexzzz2008/codex-lane/internal/platform"
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
@@ -46,11 +47,16 @@ func main() {
 	if err := platform.EnsureWebView2(); err != nil {
 		os.Exit(1)
 	}
+	if install.AutoMigrate() {
+		// The installed copy took over; the portable file is removed by it.
+		return
+	}
 	executable, _ := selfupdate.Executable()
 	predecessor := selfupdate.PredecessorPID()
 	platform.AppLog("启动 v%s exe=%s replaces=%d", appservice.Version, executable, predecessor)
 	selfupdate.ReportStarted()
 	selfupdate.WaitForPredecessor()
+	install.RemovePending()
 	if predecessor > 0 {
 		// The window can only appear once the previous process released the
 		// Wails instance mutex. If it never does, put the old build back so the

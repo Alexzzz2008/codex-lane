@@ -881,7 +881,12 @@
             {/if}
           </div>
         </div>
-        <div class="about-meta"><span>Windows x64 · 单文件便携版</span><span>不安装服务或驱动</span></div>
+        <div class="about-meta">
+          <span title={snapshot.install?.executable || ""}>
+            {snapshot.install?.managed ? "本机目录运行 · 更新不移动桌面图标" : "便携文件运行 · 更新会移动桌面图标"}
+          </span>
+          <span>{snapshot.install?.shortcut ? "桌面快捷方式已就绪" : "不安装服务或驱动"}</span>
+        </div>
       </article>
     </aside>
   </div>

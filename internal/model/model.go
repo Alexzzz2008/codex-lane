@@ -302,6 +302,7 @@ type Snapshot struct {
 	Version       string               `json:"version"`
 	RepositoryURL string               `json:"repositoryUrl"`
 	ReleasesURL   string               `json:"releasesUrl"`
+	Install       InstallState         `json:"install"`
 	Settings      Settings             `json:"settings"`
 	Lane          LaneStatus           `json:"lane"`
 	Upstream      UpstreamStatus       `json:"upstream"`
@@ -317,6 +318,16 @@ type Snapshot struct {
 	Diagnostics   *DiagnosticReport    `json:"diagnostics"`
 	Update        UpdateStatus         `json:"update"`
 	Events        []Event              `json:"events"`
+}
+
+// InstallState describes where the running build lives, which decides whether
+// self updates can replace it without disturbing the desktop icon layout.
+type InstallState struct {
+	Managed      bool   `json:"managed"`
+	Executable   string `json:"executable"`
+	InstallPath  string `json:"installPath"`
+	ShortcutPath string `json:"shortcutPath"`
+	Shortcut     bool   `json:"shortcut"`
 }
 
 type Dependency struct {

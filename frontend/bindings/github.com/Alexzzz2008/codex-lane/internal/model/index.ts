@@ -10,6 +10,7 @@ export type {
     Environment,
     Event,
     HistoryPoint,
+    InstallState,
     LaneStatus,
     LaunchOptions,
     LaunchResult,
