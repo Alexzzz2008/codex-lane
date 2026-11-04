@@ -1,56 +1,85 @@
 # Codex Lane
 
-为 OpenAI Codex Desktop 提供独立进程级代理通道的 Windows 应用。
+为 OpenAI Codex Desktop 和内核提供独立代理通道的 Windows 单文件应用。
 
-Codex Lane 只让 Codex 通过本地 Lane 转发到已有 HTTP、HTTPS 或 SOCKS5 代理，不改系统代理、不启用 TUN，也不影响其他应用。
+连接已有 HTTP、HTTPS 或 SOCKS5 代理，不修改系统代理，不需要 TUN，也不改变其他应用的网络配置。
+
+[下载最新版](https://github.com/Alexzzz2008/codex-lane/releases/latest) · [版本记录](https://github.com/Alexzzz2008/codex-lane/releases)
 
 ![运行总览](docs/screenshots/overview.png)
 
-## 工作方式
+## 快速开始
 
-```text
-Codex Desktop ── UI 入口 ──┐
-                           ├── Codex Lane ── 已有代理 ── OpenAI
-Codex 内核 ─── 内核入口 ───┘
-```
+1. 启动本机代理软件，确认监听地址和端口。
+2. 下载最新 ZIP，解压后运行 `CodexLane.exe`。缺少 WebView2 时，启动提示可引导安装。
+3. 在「设置」填写上游代理，点击「保存并应用」，再点击「测试」。
+4. 在「总览」打开 Codex，或接入已经运行的 Codex；随后在「请求日志」查看连接链路。
 
-- 界面层使用 `--proxy-server`，内核层使用代理环境变量，均指向 Lane。
-- 自动识别 Windows 或 WSL2 内核，也可以手动切换。
-- HTTPS 只记录域名、端口、结果、耗时和流量，不做 MITM。
+Lane 与原生 Codex 可以按任意顺序打开。开启「发现原生 Codex 时提示接入」后，
+发现尚未接入的 Codex 会询问「现在重启」或「稍后重启」。已有 Codex 需要重启才能
+应用代理；确认并通过代理预检后才会重启，预检失败会保留当前 Codex。选择稍后后，仍可从总览接入。
+
+Clash 使用规则模式时，还需让 `openai.com`、`chatgpt.com`、`oaistatic.com`、
+`oaiusercontent.com` 命中可用的代理策略。可在「设置 → Clash 规则检查」复制建议片段，
+并替换成自己的策略组名；Lane 不会自动修改 Clash 规则。
 
 ## 功能
 
-- **双入口**：界面与内核使用独立回环端口，支持一键启动、停止和重新接入 Codex。
-- **代理切换**：在总览选择代理档案，新连接立即使用新代理，本地端口与已有连接保持不变。
+- **独立双入口**：分别连接 Codex 界面与内核，一键开启、停止通道。
+- **代理档案**：保存多组地址、测速并切换；新连接使用新代理，已有连接保持原链路。
 - **掉线恢复**：上游暂时离线时保留本地入口，代理恢复后新连接可继续使用；支持备用档案自动切换。
 - **分流控制**：按域名选择代理或直连，白名单限制可访问的目标域名。
-- **请求日志**：查看代理链路、状态、延迟和流量，支持报告与 HAR 导出。
-- **连通检查**：检查代理、Codex、WebView2、WSL2 与 OpenAI 域名。
-- **桌面体验**：单文件 exe、托盘、开机自启，以及带 SHA-256 校验、失败回滚的一键自更新。
+- **实时观测**：查看连接状态、代理或直连链路、延迟与流量，支持筛选、暂停和报告导出。
+- **连通检查**：检查本地入口、上游代理、OpenAI 域名及运行环境，不重启 Codex，不消耗模型额度。
+- **桌面功能**：托盘、开机自启、Windows/WSL 内核识别与切换，以及应用内更新。
 
-## 快速开始
+接入发现使用窗口事件，无定时进程扫描。窗口隐藏时暂停界面刷新，后台继续记录连接。
 
-1. 从 [Releases](https://github.com/Alexzzz2008/codex-lane/releases) 下载并解压最新便携版。
-2. 运行 `CodexLane.exe`，确认上游代理地址和端口。
-3. 在「总览」打开或重新接入 Codex，在「请求日志」确认实际代理链路。
+## 设置与运行环境
 
-首次从桌面或临时目录运行时，程序会把自己复制到
-`%LOCALAPPDATA%\Programs\CodexLane`，并在桌面留下 `Codex Lane` 快捷方式。
-从桌面解压出的子文件夹启动也适用。迁移成功并显示窗口后才清理原 exe；
-快捷方式创建失败时保留原程序。后续更新只替换固定目录中的 exe，保留桌面快捷方式。
+| 设置 | 保存与生效 |
+|---|---|
+| 上游地址、端口 | 点击「保存并应用」，新连接生效 |
+| Lane 本地入口 | 自动选择并记住端口，后续优先复用 |
+| 开关与下拉 | 自动保存；具体生效时机见对应设置说明 |
+| Windows / WSL 内核模式 | 下次打开 Codex 时生效，修改前备份 Codex 配置 |
+| 关闭窗口到托盘 | 下次启动 Lane 时生效 |
+| 日志保留、内存容量 | 保存后应用；默认保留 14 天、缓存 10,000 条 |
 
-“发现原生 Codex 时提示接入”开启时，Lane 会在启动检查及 Codex 窗口出现/激活时
-核验接入状态，不定时扫描进程。发现未接入的 Codex 后，可选“现在重启”或“稍后重启”；
-选择稍后后，同一进程不再重复弹窗，可随时在总览手动接入。只有确认并通过代理预检后才会重启 Codex。
+自动模式读取 Codex 的内核配置；配置尚不存在时按 Windows 处理。WSL 模式目前要求
+mirrored 网络，通过子进程环境传递代理。Lane 的发行版选项用于预检，实际发行版在 Codex 内设置。
 
-窗口隐藏时暂停界面状态刷新，请求日志仍由后台记录；显示窗口后补齐最新状态。
+## 文件位置与更新
 
-首次没有 `config.toml` 时，自动模式按 Windows 内核处理；手动选择 Windows/WSL
-会写入对应配置。WSL 模式通过子进程的 `WSLENV` 传递代理，当前要求 mirrored 网络。
-启动前会先验证上游；验证失败时保留正在运行的 Codex。
+首次从桌面、下载或临时目录（含其子目录）运行时，程序会迁移到固定目录，并创建桌面快捷方式。
+迁移成功、窗口显示后才清理原 exe；失败时保留原程序。
 
-同一时间只允许一个实例。手动替换 exe 后如果窗口仍是旧版本，请先右键托盘图标
-「退出 Codex Lane」再重新打开；0.1.34 起会直接弹窗提示版本冲突。
+```text
+程序：%LOCALAPPDATA%\Programs\CodexLane\CodexLane.exe
+配置：%LOCALAPPDATA%\CodexLane\launcher.json
+日志：%LOCALAPPDATA%\CodexLane\logs\
+```
+
+配置独立于程序保存，升级时继续沿用。
+
+应用自动检查并后台下载更新，安装前校验 SHA-256；可在「设置 → 关于」点击「重启并更新」，
+已下载更新也会在正常退出时安装。离线时保留已验证缓存，新版本启动失败时尝试恢复旧版。
+更新保留桌面快捷方式；重启更新会短暂中断代理连接，不结束 Codex。
+
+手动替换程序前，请先从托盘菜单退出 Lane，避免旧实例仍占用窗口。
+
+## 工作方式与边界
+
+```text
+Codex Desktop ── 界面入口 ──┐
+                             ├── Codex Lane ── 已有代理 ── OpenAI
+Codex 内核 ───── 内核入口 ──┘
+```
+
+界面通过启动参数、内核通过代理环境变量连接 Lane。HTTPS 只记录域名、端口、结果、耗时和流量，
+不解密请求内容，不做 MITM。
+
+Lane 不提供代理节点或订阅，不管理 Codex 账号；暂不支持需要用户名密码的上游代理认证。
 
 ## 命令行
 
@@ -62,29 +91,9 @@ CodexLane.exe --version          输出版本号
 CodexLane.exe --check-webview2   检查 WebView2 Runtime
 ```
 
-## 配置
-
-```text
-%LOCALAPPDATA%\CodexLane\launcher.json
-%LOCALAPPDATA%\CodexLane\logs\requests-YYYYMMDD.jsonl
-%LOCALAPPDATA%\CodexLane\logs\app.log
-```
-
-旧版放在 exe 同目录的 `launcher.json` 会自动迁移。日志默认保留 14 天。
-
-开关与下拉自动保存，代理地址和端口通过「保存并应用」确认。切换代理只影响新连接；
-内核模式在下次打开 Codex 时生效，托盘关闭行为在下次启动 Lane 时生效。
-WSL 发行版选项用于预检，Codex 的实际发行版在 Codex 内设置。
-
-已下载的更新会在重启后恢复并重新校验。重启更新会短暂中断代理连接，但不会结束 Codex。
-
-## 边界
-
-不管理代理节点、订阅、系统代理或 Codex 账号，也不支持需要用户名密码的代理认证。
-
 ## 构建
 
-需要 Go 1.26+、Node.js 20+ 和 Wails v3 CLI。
+需要 Go 1.26+、Node.js 22.12+ 和 Wails v3 CLI。
 
 ```powershell
 pwsh -File scripts/build.ps1
