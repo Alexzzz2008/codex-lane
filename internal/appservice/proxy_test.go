@@ -15,6 +15,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/codex"
 	"github.com/Alexzzz2008/codex-lane/internal/config"
 	"github.com/Alexzzz2008/codex-lane/internal/model"
+	"github.com/Alexzzz2008/codex-lane/internal/platform"
 )
 
 func newProxyTestService(t *testing.T) *AppService {
@@ -23,6 +24,7 @@ func newProxyTestService(t *testing.T) *AppService {
 	ctx, cancel := context.WithCancel(context.Background())
 	service.ctx = ctx
 	service.cfg = config.Default()
+	service.cfg.Startup.PromptCodexProxy = false
 	service.paths.ConfigPath = filepath.Join(t.TempDir(), "launcher.json")
 	service.paths.CodexHome = t.TempDir()
 	service.cachedEngine = model.ResolvedEngine{Resolved: model.EngineWindows}
@@ -152,6 +154,7 @@ func TestSettingsAndProfileSwitchKeepExistingListener(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := model.SettingsInput(config.Settings(service.currentConfig()))
+	input.LaunchAtLogin = platform.IsAutoStart()
 	input.Host = "127.0.0.2"
 	if _, err := service.SaveSettings(input); err != nil {
 		t.Fatal(err)
@@ -179,6 +182,7 @@ func TestSavingManualEngineWritesAnAbsentSetting(t *testing.T) {
 	service.cachedEngine = model.ResolvedEngine{Resolved: model.EngineWSL}
 	service.cachedWSL = model.WSLStatus{Distro: "fixture"}
 	input := model.SettingsInput(config.Settings(service.cfg))
+	input.LaunchAtLogin = platform.IsAutoStart()
 	if _, err := service.SaveSettings(input); err != nil {
 		t.Fatal(err)
 	}

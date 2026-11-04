@@ -104,6 +104,7 @@ export interface LaneStatus {
 }
 
 export interface LaunchOptions {
+    "expectedPid": number;
     "restartExisting": boolean;
 }
 
@@ -180,6 +181,7 @@ export interface RouteRule {
 }
 
 export interface Settings {
+    "promptCodexProxy": boolean;
     "protocol": string;
     "host": string;
     "port": number;
@@ -201,6 +203,7 @@ export interface Settings {
 }
 
 export interface SettingsInput {
+    "promptCodexProxy": boolean;
     "protocol": string;
     "host": string;
     "port": number;
@@ -222,6 +225,7 @@ export interface SettingsInput {
 }
 
 export interface Snapshot {
+    "codexWatchError": string;
     "version": string;
     "repositoryUrl": string;
     "releasesUrl": string;

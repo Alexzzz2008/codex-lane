@@ -24,11 +24,16 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.40"
+const Version = "0.1.41"
 
 type Emitter func(name string, data ...any)
 
 type AppService struct {
+	watchMu               sync.Mutex
+	watchCancel           context.CancelFunc
+	codexWatchError       string
+	showWindow            func()
+	lastCodexOffer        int
 	operationMu           sync.Mutex
 	mu                    sync.RWMutex
 	ctx                   context.Context
@@ -109,6 +114,7 @@ func (s *AppService) startup(ctx context.Context) error {
 		s.addEvent("ok", "本地网关已就绪", "Codex 与内核将使用独立双入口")
 	}
 	s.Refresh()
+	s.configureCodexWatch()
 	s.startMonitor()
 	s.startUpdateLoop()
 	if cfg.Startup.OpenCodex {
@@ -118,6 +124,7 @@ func (s *AppService) startup(ctx context.Context) error {
 }
 
 func (s *AppService) ServiceShutdown() error {
+	s.stopCodexWatch()
 	s.StopLane()
 	s.mu.RLock()
 	store := s.store
@@ -237,6 +244,7 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 		s.addEvent("ok", "代理配置已应用", "新连接使用当前代理，已有连接保持原链路")
 	}
 	s.addEvent("info", "设置已保存", config.UpstreamURL(cfg.Upstream))
+	s.configureCodexWatch()
 	refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer refreshCancel()
 	engineChanged := previousEngine != cfg.Engine || previousDistro != cfg.WSLDistro
@@ -401,14 +409,14 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 	}
 	if status.Running {
 		connected := strings.EqualFold(status.ProxyURL, lane.InterfaceURL())
-		if connected && !options.RestartExisting {
+		if connected && (!options.RestartExisting || options.ExpectedPID != status.MainPID) {
 			return model.LaunchResult{
 				AlreadyRunning: true,
 				PID:            status.MainPID,
 				Message:        "Codex 已在 Lane 通道中运行",
 			}, nil
 		}
-		if !options.RestartExisting {
+		if !options.RestartExisting || (options.ExpectedPID > 0 && options.ExpectedPID != status.MainPID) {
 			return model.LaunchResult{
 				NeedsRestart: true,
 				PID:          status.MainPID,

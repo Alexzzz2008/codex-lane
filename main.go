@@ -107,6 +107,12 @@ func main() {
 		platform.AppLog("收到退出请求")
 		app.Quit()
 	})
+	service.SetShowWindow(func() {
+		if window != nil {
+			window.Show()
+			window.Focus()
+		}
+	})
 
 	window = app.Window.NewWithOptions(application.WebviewWindowOptions{
 		Title:            "Codex Lane",

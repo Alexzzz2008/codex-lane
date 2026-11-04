@@ -35,9 +35,10 @@ func Default() model.Config {
 		AskBeforeKill:       true,
 		RequireHealthyProxy: true,
 		Startup: model.Startup{
-			OpenCodex:       false,
-			StopCodexOnExit: false,
-			MinimizeToTray:  true,
+			PromptCodexProxy: true,
+			OpenCodex:        false,
+			StopCodexOnExit:  false,
+			MinimizeToTray:   true,
 		},
 		Logging: model.Logging{
 			RequestMetadata: true,
@@ -311,6 +312,7 @@ func validateHost(host string) error {
 }
 
 func ApplySettings(cfg *model.Config, in model.SettingsInput) error {
+	cfg.Startup.PromptCodexProxy = in.PromptCodexProxy
 	profiles := make([]model.UpstreamProfile, 0, len(in.Upstreams))
 	for _, profile := range in.Upstreams {
 		profiles = append(profiles, model.UpstreamProfile{
@@ -388,23 +390,24 @@ func trimPatterns(patterns []string) []string {
 
 func Settings(cfg model.Config) model.Settings {
 	return model.Settings{
-		Protocol:        cfg.Upstream.Protocol,
-		Host:            cfg.Upstream.Host,
-		Port:            cfg.Upstream.Port,
-		NoProxy:         cfg.Upstream.NoProxy,
-		Engine:          cfg.Engine,
-		WSLDistro:       cfg.WSLDistro,
-		OpenCodex:       cfg.Startup.OpenCodex,
-		StopCodexOnExit: cfg.Startup.StopCodexOnExit,
-		RetentionDays:   cfg.Logging.RetentionDays,
-		MaxMemoryRows:   cfg.Logging.MaxMemoryRows,
-		Upstreams:       cfg.Upstreams,
-		ActiveUpstream:  cfg.ActiveUpstream,
-		AutoFailover:    cfg.AutoFailover,
-		HostFilterMode:  cfg.Lane.HostFilterMode,
-		AllowedHosts:    cfg.Lane.AllowedHosts,
-		Routes:          cfg.Lane.Routes,
-		MinimizeToTray:  cfg.Startup.MinimizeToTray,
+		PromptCodexProxy: cfg.Startup.PromptCodexProxy,
+		Protocol:         cfg.Upstream.Protocol,
+		Host:             cfg.Upstream.Host,
+		Port:             cfg.Upstream.Port,
+		NoProxy:          cfg.Upstream.NoProxy,
+		Engine:           cfg.Engine,
+		WSLDistro:        cfg.WSLDistro,
+		OpenCodex:        cfg.Startup.OpenCodex,
+		StopCodexOnExit:  cfg.Startup.StopCodexOnExit,
+		RetentionDays:    cfg.Logging.RetentionDays,
+		MaxMemoryRows:    cfg.Logging.MaxMemoryRows,
+		Upstreams:        cfg.Upstreams,
+		ActiveUpstream:   cfg.ActiveUpstream,
+		AutoFailover:     cfg.AutoFailover,
+		HostFilterMode:   cfg.Lane.HostFilterMode,
+		AllowedHosts:     cfg.Lane.AllowedHosts,
+		Routes:           cfg.Lane.Routes,
+		MinimizeToTray:   cfg.Startup.MinimizeToTray,
 	}
 }
 

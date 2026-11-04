@@ -32,6 +32,7 @@
   } = $props();
 
   const defaultDraft: SettingsInput = {
+    promptCodexProxy: true,
     protocol: "http",
     host: "127.0.0.1",
     port: 7897,
@@ -54,6 +55,7 @@
 
   function fromSnapshot(value: Snapshot): SettingsInput {
     return {
+      promptCodexProxy: value.settings.promptCodexProxy,
       protocol: value.settings.protocol,
       host: value.settings.host,
       port: value.settings.port,
@@ -147,6 +149,7 @@
   });
 
   const keys: Array<keyof SettingsInput> = [
+    "promptCodexProxy",
     "protocol",
     "host",
     "port",
@@ -800,6 +803,10 @@
 
       <article class="panel settings-card">
         <div class="panel-head"><div><h2 class="panel-title">启动、隔离与记录</h2><p class="panel-sub">默认最小权限，所有变更都可见、可撤销。</p></div></div>
+        <div class="setting-row">
+          <div class="setting-copy"><b>发现原生 Codex 时提示接入</b><span>{snapshot.codexWatchError || "支持任意启动顺序；使用窗口事件、每个进程仅核验一次，确认重启后接入。"}</span></div>
+          <div class="setting-control"><button class:off={!draft.promptCodexProxy} class="switch" aria-label="发现原生 Codex 时提示接入" onclick={() => { draft.promptCodexProxy = !draft.promptCodexProxy; scheduleAutoSave(); }}></button></div>
+        </div>
         <div class="setting-row">
           <div class="setting-copy"><b>启动 Lane 时打开 Codex</b><span>只有显式开启后才会拉起 Codex Desktop。</span></div>
           <div class="setting-control"><button class:off={!draft.openCodex} class="switch" aria-label="启动 Lane 时打开 Codex" onclick={() => { draft.openCodex = !draft.openCodex; scheduleAutoSave(); }}></button></div>

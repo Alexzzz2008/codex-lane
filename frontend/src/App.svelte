@@ -4,6 +4,7 @@
   import { AppService } from "../bindings/github.com/Alexzzz2008/codex-lane/internal/appservice";
   import type {
     Event,
+    CodexStatus,
     LaunchResult,
     RequestRecord,
     SettingsInput,
@@ -24,6 +25,7 @@
     body: string;
     note?: string;
     confirm: string;
+    cancel?: string;
     danger?: boolean;
     action: () => Promise<void> | void;
   };
@@ -40,6 +42,28 @@
   let readyUpdateNotified = "";
   let loadSequence = 0;
   let requestRefreshTimer: number | undefined;
+  let requestRenderTimer: number | undefined;
+  const pendingRequests = new Map<string, RequestRecord>();
+  let promptedCodexPID = $state(0);
+
+  function promptCodexProxy(pid: number) {
+    promptedCodexPID = pid;
+    modal = {
+      title: "重启 Codex 以接入代理？",
+      body: "重启后，Codex Lane 才会接管 Codex 并通过代理访问网络。接入成功后，可按需关闭 TUN 和系统代理。",
+      note: `当前 Codex（PID ${pid}）尚未接入 Lane。重启可能中断正在进行的任务，请先保存重要内容；代理预检失败时不会关闭 Codex。`,
+      confirm: "现在重启",
+      cancel: "稍后重启",
+      action: () => launch(true, pid),
+    };
+  }
+
+  $effect(() => {
+    const current = snapshot?.codex;
+    if (!snapshot?.settings.promptCodexProxy || !snapshot.lane.running || !current?.running ||
+      current.proxyMatched || !current.mainPid || promptedCodexPID === current.mainPid || busy || modal) return;
+    promptCodexProxy(current.mainPid);
+  });
 
   const pages: Array<{ id: Page; label: string }> = [
     { id: "overview", label: "总览" },
@@ -102,11 +126,11 @@
     else notify("error", "刷新失败", loadError);
   }
 
-  async function launch(restart = false) {
+  async function launch(restart = false, expectedPid = 0) {
     if (!snapshot) return;
     busy = restart ? "restart" : "launch";
     try {
-      const result: LaunchResult = await AppService.LaunchCodex({ restartExisting: restart });
+      const result: LaunchResult = await AppService.LaunchCodex({ restartExisting: restart, expectedPid });
       if (result.needsInstall) {
         modal = {
           title: "需要先安装 Codex Desktop",
@@ -127,13 +151,7 @@
         return;
       }
       if (result.needsRestart) {
-        modal = {
-          title: "Codex 正在运行，但未接入当前 Lane",
-          body: result.message,
-          note: `确认后只结束 Codex 主进程（PID ${result.pid}），再按当前 Lane 双入口重新启动；不会结束其他应用。`,
-          confirm: "重启并接入",
-          action: () => launch(true),
-        };
+        promptCodexProxy(result.pid);
         return;
       }
       if (result.alreadyRunning) {
@@ -144,17 +162,7 @@
       await load(true);
     } catch (error) {
       const message = errorText(error);
-      if (message.includes("重启") || message.includes("已在运行")) {
-        modal = {
-          title: "需要重启 Codex",
-          body: message,
-          note: "重启前会确认当前主进程，只操作 OpenAI.Codex 包内的程序。",
-          confirm: "重启并接入",
-          action: () => launch(true),
-        };
-      } else {
-        notify("error", "Codex 启动失败", message);
-      }
+      notify("error", "Codex 启动失败", message);
     } finally {
       busy = "";
     }
@@ -273,6 +281,9 @@
 
   async function clearRequests() {
     loadSequence++;
+    pendingRequests.clear();
+    if (requestRenderTimer !== undefined) window.clearTimeout(requestRenderTimer);
+    requestRenderTimer = undefined;
     busy = "clear";
     try {
       snapshot = await AppService.ClearRequests();
@@ -435,13 +446,20 @@
   }
 
   function upsertRequest(request: RequestRecord) {
-    if (!snapshot) return;
-    const rows = snapshot.requests ?? [];
-    const index = rows.findIndex((item) => item.id === request.id);
-    const next = [...rows];
-    if (index >= 0) next[index] = request;
-    else next.unshift(request);
-    snapshot.requests = next.slice(0, 300);
+    if (!snapshot || document.hidden) return;
+    pendingRequests.set(request.id, request);
+    if (pendingRequests.size > 300) pendingRequests.delete(pendingRequests.keys().next().value!);
+    if (requestRenderTimer !== undefined) return;
+    requestRenderTimer = window.setTimeout(() => {
+      requestRenderTimer = undefined;
+      if (snapshot && !document.hidden) {
+        const rows = snapshot.requests ?? [];
+        const existing = new Set(rows.map((item) => item.id));
+        const added = [...pendingRequests.values()].filter((item) => !existing.has(item.id)).reverse();
+        snapshot.requests = [...added, ...rows.map((item) => pendingRequests.get(item.id) ?? item)].slice(0, 300);
+      }
+      pendingRequests.clear();
+    }, 100);
   }
 
   onMount(() => {
@@ -450,12 +468,12 @@
 
     const offRequest = Events.On("lane:request", (event: { data: { event: string; request: RequestRecord } }) => {
       const payload = event?.data;
-      if (!payload?.request) return;
+      if (!payload?.request || document.hidden) return;
       upsertRequest(payload.request);
       if (payload.event === "request:finished" && requestRefreshTimer === undefined) {
         requestRefreshTimer = window.setTimeout(() => {
           requestRefreshTimer = undefined;
-          if (polling && !busy) void load(false);
+          if (polling && !busy && !document.hidden) void load(false);
         }, 450);
       }
     });
@@ -480,18 +498,29 @@
         notify("ok", `更新 v${status.latestVersion} 已就绪`, "可在设置页的「关于」中重启更新");
       }
     });
+    const offCodex = Events.On("lane:codex", (event: { data: CodexStatus }) => {
+      if (snapshot && event?.data) snapshot.codex = event.data;
+    });
 
     const timer = window.setInterval(() => {
-      if (polling && !busy) load(false);
+      if (polling && !busy && !document.hidden) void load(false);
     }, 7000);
+    const onVisible = () => {
+      if (!document.hidden && !busy) void load(false);
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
     return () => {
       polling = false;
       window.clearInterval(timer);
       if (requestRefreshTimer !== undefined) window.clearTimeout(requestRefreshTimer);
+      if (requestRenderTimer !== undefined) window.clearTimeout(requestRenderTimer);
+      pendingRequests.clear();
+      document.removeEventListener("visibilitychange", onVisible);
       if (typeof offRequest === "function") offRequest();
       if (typeof offEvent === "function") offEvent();
       if (typeof offUpdate === "function") offUpdate();
+      if (typeof offCodex === "function") offCodex();
     };
   });
 
@@ -600,7 +629,7 @@
         <div class="modal-head"><h2 id="lane-modal-title">{modal.title}</h2><p>{modal.body}</p></div>
         {#if modal.note}<div class="modal-body">{modal.note}</div>{/if}
         <div class="modal-actions">
-          <button class="btn" onclick={() => (modal = null)}>取消</button>
+          <button class="btn" onclick={() => (modal = null)}>{modal.cancel || "取消"}</button>
           <button class:accent={!modal.danger} class:dark={modal.danger} class="btn" onclick={async () => { const action = modal?.action; modal = null; await action?.(); }}>
             {modal.confirm}
           </button>

@@ -28,6 +28,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	lane := s.lane
 	store := s.store
 	cachedCodex := s.cachedCodex
+	codexWatchError := s.codexWatchError
 	pkg := s.cachedPackage
 	cachedDeps := s.cachedDeps
 	cachedWSL := s.cachedWSL
@@ -133,25 +134,26 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	}
 
 	snapshot := model.Snapshot{
-		Version:       Version,
-		RepositoryURL: RepositoryURL,
-		ReleasesURL:   ReleasesURL,
-		Install:       installState(),
-		Settings:      config.Settings(cfg),
-		Lane:          laneStatus,
-		Upstream:      upstream,
-		Codex:         codexStatus,
-		Dependencies:  cachedDeps,
-		Environment:   environment,
-		Engine:        engine,
-		WSL:           wslStatus,
-		Stats:         stats,
-		Requests:      requests,
-		Series:        series,
-		TestReport:    testReport,
-		Diagnostics:   diagnostic,
-		Update:        updateStatus,
-		Events:        events,
+		CodexWatchError: codexWatchError,
+		Version:         Version,
+		RepositoryURL:   RepositoryURL,
+		ReleasesURL:     ReleasesURL,
+		Install:         installState(),
+		Settings:        config.Settings(cfg),
+		Lane:            laneStatus,
+		Upstream:        upstream,
+		Codex:           codexStatus,
+		Dependencies:    cachedDeps,
+		Environment:     environment,
+		Engine:          engine,
+		WSL:             wslStatus,
+		Stats:           stats,
+		Requests:        requests,
+		Series:          series,
+		TestReport:      testReport,
+		Diagnostics:     diagnostic,
+		Update:          updateStatus,
+		Events:          events,
 	}
 	snapshot.Settings.LaunchAtLogin = platform.IsAutoStart()
 	return snapshot

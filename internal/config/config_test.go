@@ -1,10 +1,28 @@
 package config
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 )
+
+func TestCodexProxyPromptPreferencePersists(t *testing.T) {
+	cfg := Default()
+	input := model.SettingsInput(Settings(cfg))
+	input.PromptCodexProxy = false
+	if err := ApplySettings(&cfg, input); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "launcher.json")
+	if err := Save(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil || Settings(loaded).PromptCodexProxy {
+		t.Fatalf("disabled prompt preference was lost: %v", err)
+	}
+}
 
 func TestApplySettingsUpdatesActiveProfileFromTopFields(t *testing.T) {
 	cfg := Default()
