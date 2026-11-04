@@ -32,6 +32,11 @@
   let harBusy = $state(false);
   let harCopied = $state(false);
   let commandCopied = $state(false);
+  let actionError = $state("");
+
+  function isAbnormal(request: RequestRecord): boolean {
+    return Number(request.status) >= 400 || request.result === "failed" || request.result === "blocked" || Boolean(request.error);
+  }
 
   $effect(() => {
     if (!paused) frozen = snapshot.requests ?? [];
@@ -42,12 +47,12 @@
     frozen.filter((request) => {
       const haystack = `${request.host} ${request.source} ${request.method} ${request.status} ${request.error}`.toLowerCase();
       const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
-      const abnormal = request.result !== "ok" || Number(request.status) >= 400 || Boolean(request.error);
+      const abnormal = isAbnormal(request);
       return matchesQuery && (filter === "all" || abnormal);
     }),
   );
   const selected = $derived(filtered.find((request) => request.id === selectedId) ?? filtered[0] ?? null);
-  const errorCount = $derived(frozen.filter((request) => request.result !== "ok" || Number(request.status) >= 400).length);
+  const errorCount = $derived(frozen.filter(isAbnormal).length);
 
   function statusText(request: RequestRecord): string {
     if (!request.status) return "连接中";
@@ -56,6 +61,7 @@
   }
 
   function statusPill(request: RequestRecord): string {
+    if (!request.status && !isAbnormal(request)) return "run";
     if (request.result === "failed" || Number(request.status) >= 400) return "fail";
     if (request.result !== "ok") return "warn";
     return "pass";
@@ -67,11 +73,14 @@
 
   async function exportHAR() {
     harBusy = true;
+    actionError = "";
     try {
       const har = await AppService.ExportHAR();
       await navigator.clipboard.writeText(har);
       harCopied = true;
       window.setTimeout(() => (harCopied = false), 2000);
+    } catch (error) {
+      actionError = `导出失败：${error instanceof Error ? error.message : String(error)}`;
     } finally {
       harBusy = false;
     }
@@ -83,9 +92,14 @@
   }
 
   async function copyTestCommand(request: RequestRecord) {
-    await navigator.clipboard.writeText(testCommand(request));
-    commandCopied = true;
-    window.setTimeout(() => (commandCopied = false), 2000);
+    actionError = "";
+    try {
+      await navigator.clipboard.writeText(testCommand(request));
+      commandCopied = true;
+      window.setTimeout(() => (commandCopied = false), 2000);
+    } catch (error) {
+      actionError = `复制失败：${error instanceof Error ? error.message : String(error)}`;
+    }
   }
 </script>
 
@@ -114,6 +128,8 @@
       </button>
     </div>
   </div>
+
+  {#if actionError}<p class="stat-error" role="alert">{actionError}</p>{/if}
 
   <div class="request-metrics">
     <article class="panel request-metric">

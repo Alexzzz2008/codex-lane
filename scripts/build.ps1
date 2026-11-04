@@ -72,6 +72,15 @@ foreach ($tool in @("npm", "wails3", "go")) {
     }
 }
 
+Push-Location $root
+try {
+    wails3 generate bindings -clean=true -ts -i -names -time-type=string
+    if ($LASTEXITCODE -ne 0) { throw "wails3 generate bindings failed with exit code $LASTEXITCODE" }
+}
+finally {
+    Pop-Location
+}
+
 Push-Location (Join-Path $root "frontend")
 try {
     if (Test-Path "node_modules/.bin/vite.cmd") {
@@ -97,8 +106,6 @@ finally {
 
 Push-Location $root
 try {
-    wails3 generate bindings -clean=true -ts -i -names -time-type=string
-    if ($LASTEXITCODE -ne 0) { throw "wails3 generate bindings failed with exit code $LASTEXITCODE" }
     Push-Location "build"
     try {
         wails3 generate syso -arch amd64 -icon windows/icon.ico `

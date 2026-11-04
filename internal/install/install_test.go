@@ -54,3 +54,26 @@ func TestPortableLocation(t *testing.T) {
 		t.Fatalf("expected %s to stay untouched", project)
 	}
 }
+
+func TestMigrationSourceMustMatchInstalledExecutable(t *testing.T) {
+	root := t.TempDir()
+	source := filepath.Join(root, "CodexLane.exe")
+	installed := filepath.Join(root, "installed.exe")
+	for _, path := range []string{source, installed} {
+		if err := os.WriteFile(path, []byte("same-build"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !removableSource(source, installed) {
+		t.Fatal("verified migration source should be removable")
+	}
+	if removableSource(installed, installed) {
+		t.Fatal("must never remove the running executable")
+	}
+	if err := os.WriteFile(source, []byte("other-file"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if removableSource(source, installed) {
+		t.Fatal("must preserve a source whose contents changed")
+	}
+}

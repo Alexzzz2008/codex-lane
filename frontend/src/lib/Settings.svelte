@@ -197,12 +197,20 @@
     newProfileHost = snapshot.settings.host || "127.0.0.1";
     newProfilePort = snapshot.settings.port || 7897;
     void loadDependencies();
+    return () => {
+      if (saveTimer !== undefined) {
+        window.clearTimeout(saveTimer);
+        saveTimer = undefined;
+        void autoSave();
+      }
+    };
   });
 
   async function runSpeedTest() {
     speedBusy = true;
     profileError = "";
     try {
+      if (dirty && !(await save())) return;
       speedResults = (await AppService.ProbeAllUpstreams()) ?? [];
       if (speedResults.length === 0) profileError = "还没有档案可测速";
     } catch (error) {
@@ -269,56 +277,63 @@
     dirty = true;
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
+      saveTimer = undefined;
       void autoSave();
     }, 250);
   }
 
   async function autoSave() {
+    await save();
+  }
+
+  async function save(): Promise<boolean> {
+    if (saveTimer !== undefined) {
+      window.clearTimeout(saveTimer);
+      saveTimer = undefined;
+    }
     if (autosaving) {
       pendingSave = true;
-      return;
+      return false;
     }
     autosaving = true;
-    const payload = prunedDraft();
-    const success = await onSave(payload);
-    autosaving = false;
-    if (success) {
-      dirty = false;
-      baseline = JSON.stringify(payload);
-      lastIncoming = baseline;
-    }
-    if (pendingSave) {
-      pendingSave = false;
-      void autoSave();
-    }
-  }
-
-  async function save() {
-    const payload = prunedDraft();
-    const success = await onSave(payload);
-    if (success) {
-      dirty = false;
-      baseline = JSON.stringify(payload);
-      lastIncoming = baseline;
+    const payload = buildPayload();
+    const submitted = JSON.stringify(payload);
+    try {
+      const success = await onSave(payload);
+      if (success) {
+        const unchanged = JSON.stringify(buildPayload()) === submitted;
+        const saved = fromSnapshot(snapshot);
+        baseline = JSON.stringify(saved);
+        lastIncoming = baseline;
+        if (unchanged) draft = saved;
+        dirty = JSON.stringify(buildPayload()) !== baseline;
+      }
+      return success;
+    } finally {
+      autosaving = false;
+      if (pendingSave) {
+        pendingSave = false;
+        void autoSave();
+      }
     }
   }
 
-  function prunedDraft(): SettingsInput {
-    return {
-      ...draft,
-      upstreams: profiles.filter((item) => item.name.trim() && item.host.trim() && item.port >= 1 && item.port <= 65535),
-      routes: routes.filter((item) => item.pattern.trim()),
-      allowedHosts: allowedHosts.filter((item) => item.trim()),
-    };
+  function buildPayload(): SettingsInput {
+    return JSON.parse(JSON.stringify(draft)) as SettingsInput;
   }
 
   async function testUpstream() {
     probe = null;
-    probe = await onProbe(prunedDraft());
+    probe = await onProbe(buildPayload());
   }
 
   function cancel() {
-    draft = JSON.parse(baseline) as SettingsInput;
+    if (saveTimer !== undefined) window.clearTimeout(saveTimer);
+    saveTimer = undefined;
+    pendingSave = false;
+    draft = fromSnapshot(snapshot);
+    baseline = JSON.stringify(draft);
+    lastIncoming = baseline;
     dirty = false;
   }
 
@@ -418,14 +433,14 @@
 
   async function enableProfile(name: string) {
     if (busy === "switch" || busy === "save") return;
-    const saved = await onSave(prunedDraft());
+    const saved = await save();
     if (!saved) return;
     await onSwitchUpstream(name);
   }
 
   async function selectFastest() {
     if (busy === "switch" || busy === "save") return;
-    const saved = await onSave(prunedDraft());
+    const saved = await save();
     if (!saved) return;
     await onSelectFastest();
   }

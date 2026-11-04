@@ -88,3 +88,19 @@ func readShortcutTarget(t *testing.T, shortcut string) string {
 	}
 	return target.ToString()
 }
+
+func TestAdoptPreservesSourceWhenShortcutFails(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("LOCALAPPDATA", filepath.Join(root, "local"))
+	t.Setenv("CODEXLANE_DESKTOP_DIR", filepath.Join(root, "missing-desktop"))
+	source := filepath.Join(root, "CodexLane.exe")
+	if err := os.WriteFile(source, []byte("portable-build"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Adopt(source); err == nil {
+		t.Fatal("shortcut failure must stop migration")
+	}
+	if _, err := os.Stat(source); err != nil {
+		t.Fatalf("source was removed after failed migration: %v", err)
+	}
+}

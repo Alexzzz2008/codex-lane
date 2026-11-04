@@ -28,9 +28,9 @@ pwsh -File scripts/release.ps1
 
 脚本会依次执行：
 
-1. `svelte-check`，确保前端没有类型或模板错误。
-2. Vite 生产构建，把前端资源嵌入 exe。
-3. 重新生成 Wails TypeScript 绑定和 Windows 图标/版本资源。
+1. 从 Go 服务重新生成 Wails TypeScript 绑定。
+2. `svelte-check` 和 Vite 生产构建，确保前端匹配最新服务接口。
+3. 生成 Windows 图标/版本资源。
 4. 使用 `CGO_ENABLED=0`、`-trimpath`、`-tags production` 构建 x64 单文件。
 5. 生成自动更新直装 exe、便携 zip、`SHA256SUMS.txt` 与 `latest.json`。
 

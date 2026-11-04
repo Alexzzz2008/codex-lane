@@ -266,7 +266,7 @@ func (s *Store) List(limit int) []model.RequestRecord {
 }
 
 func (s *Store) Stats() model.RequestStats {
-	s.mu.RLock()
+	s.mu.Lock()
 	stats := model.RequestStats{
 		Total:     s.total,
 		Success:   s.success,
@@ -285,7 +285,7 @@ func (s *Store) Stats() model.RequestStats {
 		s.latDirty = false
 	}
 	sorted := s.latSorted
-	s.mu.RUnlock()
+	s.mu.Unlock()
 	if len(sorted) > 0 {
 		stats.MedianMs = percentile(sorted, 0.5)
 		stats.P95Ms = percentile(sorted, 0.95)

@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,7 +26,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.38"
+const Version = "0.1.39"
 
 type Emitter func(name string, data ...any)
 
@@ -43,10 +45,8 @@ type AppService struct {
 	testReport            *model.TestReport
 	diagnostic            *model.DiagnosticReport
 	lastDeep              time.Time
-	lastCodexCheck        time.Time
 	cachedPackage         codex.PackageInfo
 	cachedCodex           model.CodexStatus
-	cachedCodexPIDs       string
 	cachedDeps            []model.Dependency
 	cachedWSL             model.WSLStatus
 	cachedEngine          model.ResolvedEngine
@@ -128,7 +128,7 @@ func (s *AppService) ServiceShutdown() error {
 		store.Close()
 	}
 	s.mu.RLock()
-	stopCodex := s.cfg.Startup.StopCodexOnExit
+	stopCodex := s.cfg.Startup.StopCodexOnExit && s.updateStatus.Status != "restarting"
 	installPath := s.cachedCodex.InstallLocation
 	pid := s.cachedCodex.MainPID
 	s.mu.RUnlock()
@@ -222,6 +222,13 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 		}
 	}
 	newUpstream := config.UpstreamURL(cfg.Upstream)
+	if oldUpstream != newUpstream {
+		s.mu.Lock()
+		s.cachedUpstream = model.UpstreamStatus{URL: newUpstream}
+		s.lastProbe = time.Time{}
+		s.testReport = nil
+		s.mu.Unlock()
+	}
 	laneRulesChanged := !sameRoutes(previousRoutes, cfg.Lane.Routes) ||
 		!sameStrings(previousAllowed, cfg.Lane.AllowedHosts) ||
 		previousFilter != cfg.Lane.HostFilterMode
@@ -286,7 +293,7 @@ func (s *AppService) startLane(cfg model.Config) error {
 	}
 	s.mu.Unlock()
 	if cfg.RequireHealthyProxy {
-		address := fmt.Sprintf("%s:%d", cfg.Upstream.Host, cfg.Upstream.Port)
+		address := net.JoinHostPort(cfg.Upstream.Host, strconv.Itoa(cfg.Upstream.Port))
 		checkCtx, checkCancel := context.WithTimeout(context.Background(), 4*time.Second)
 		_, probeErr := gateway.CheckTCPService(checkCtx, address)
 		checkCancel()
@@ -418,10 +425,6 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 		if err := codex.KillMainProcess(ctx, pkg.InstallLocation, status.MainPID); err != nil {
 			return model.LaunchResult{}, err
 		}
-		s.mu.Lock()
-		s.lastCodexCheck = time.Time{}
-		s.cachedCodexPIDs = ""
-		s.mu.Unlock()
 		s.addEvent("info", "Codex 已停止", "等待重新注入代理参数")
 	}
 	if cfg.RequireHealthyProxy {
@@ -438,10 +441,6 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 		return result, err
 	}
 	s.addEvent("ok", "Codex 已启动", "PID "+fmt.Sprint(result.PID)+" · "+engine.Resolved)
-	s.mu.Lock()
-	s.lastCodexCheck = time.Time{}
-	s.cachedCodexPIDs = ""
-	s.mu.Unlock()
 	return result, nil
 }
 
@@ -477,10 +476,6 @@ func (s *AppService) StopCodex() (model.Snapshot, error) {
 	if err := codex.KillMainProcess(ctx, pkg.InstallLocation, status.MainPID); err != nil {
 		return model.Snapshot{}, err
 	}
-	s.mu.Lock()
-	s.lastCodexCheck = time.Time{}
-	s.cachedCodexPIDs = ""
-	s.mu.Unlock()
 	s.addEvent("info", "Codex 已停止", "未修改系统网络设置")
 	return s.Refresh()
 }

@@ -2,8 +2,9 @@ package appservice
 
 import (
 	"context"
-	"fmt"
+	"net"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -16,8 +17,6 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/preflight"
 )
 
-const codexStatusTTL = 2 * time.Second
-
 func (s *AppService) snapshot(ctx context.Context, deep bool) model.Snapshot {
 	return s.snapshotWith(ctx, deep, true)
 }
@@ -29,6 +28,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	lane := s.lane
 	store := s.store
 	cachedCodex := s.cachedCodex
+	pkg := s.cachedPackage
 	cachedDeps := s.cachedDeps
 	cachedWSL := s.cachedWSL
 	cachedEngine := s.cachedEngine
@@ -55,8 +55,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	}
 
 	codexStatus := cachedCodex
-	pkg := s.cachedPackage
-	if deep || pkg.InstallLocation == "" {
+	if deep {
 		located, err := codex.Locate(ctx)
 		if err != nil {
 			codexStatus = model.CodexStatus{Error: err.Error()}
@@ -66,30 +65,18 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 			s.mu.Unlock()
 		} else {
 			pkg = located
-		}
-	}
-	if pkg.InstallLocation != "" && (deep || time.Since(s.lastCodexCheck) >= codexStatusTTL) {
-		live := platform.ProcessIDs("ChatGPT.exe", "Codex.exe")
-		liveKey := platform.PIDSetKey(live)
-		unchanged := codexStatus.Running == (len(live) > 0) && liveKey == s.cachedCodexPIDs
-		if !deep && unchanged {
-			s.mu.Lock()
-			s.lastCodexCheck = time.Now()
-			s.mu.Unlock()
-		} else {
-			processes, processErr := codex.ListProcesses(ctx, pkg.InstallLocation)
-			if processErr != nil {
-				codexStatus = pkg.Status()
-				codexStatus.Error = processErr.Error()
-			} else {
-				codexStatus = codex.StatusWithProcesses(pkg, processes)
-			}
 			s.mu.Lock()
 			s.cachedPackage = pkg
-			s.cachedCodex = codexStatus
-			s.cachedCodexPIDs = liveKey
-			s.lastCodexCheck = time.Now()
 			s.mu.Unlock()
+		}
+	}
+	if deep && pkg.InstallLocation != "" {
+		processes, processErr := codex.ListProcesses(ctx, pkg.InstallLocation)
+		if processErr != nil {
+			codexStatus = pkg.Status()
+			codexStatus.Error = processErr.Error()
+		} else {
+			codexStatus = codex.StatusWithProcesses(pkg, processes)
 		}
 	}
 
@@ -184,7 +171,7 @@ func (s *AppService) probeUpstream(ctx context.Context, cfg model.Config) model.
 		URL:       config.UpstreamURL(cfg.Upstream),
 		CheckedAt: time.Now().Format(time.RFC3339),
 	}
-	address := fmt.Sprintf("%s:%d", cfg.Upstream.Host, cfg.Upstream.Port)
+	address := net.JoinHostPort(cfg.Upstream.Host, strconv.Itoa(cfg.Upstream.Port))
 	started := time.Now()
 	if _, err := gatewayTCPCheck(ctx, address); err != nil {
 		status.LatencyMs = time.Since(started).Milliseconds()
@@ -262,9 +249,12 @@ func (s *AppService) probeDomains(ctx context.Context, cfg model.Config) []model
 
 func (s *AppService) cacheProbe(status model.UpstreamStatus) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if status.URL != config.UpstreamURL(s.cfg.Upstream) {
+		return
+	}
 	s.cachedUpstream = status
 	s.lastProbe = time.Now()
-	s.mu.Unlock()
 }
 
 func (s *AppService) updateDeepCache(environment model.Environment, codexStatus model.CodexStatus, engine model.ResolvedEngine, wsl model.WSLStatus) {
@@ -273,6 +263,5 @@ func (s *AppService) updateDeepCache(environment model.Environment, codexStatus 
 	s.cachedCodex = codexStatus
 	s.cachedEngine = engine
 	s.cachedWSL = wsl
-	s.lastCodexCheck = time.Now()
 	s.mu.Unlock()
 }

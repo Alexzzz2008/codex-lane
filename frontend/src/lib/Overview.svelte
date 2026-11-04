@@ -66,17 +66,21 @@
     const hours = minutes / 60;
     historyRange = 0;
     historyLoading = true;
+    let active = true;
     AppService.History(hours)
       .then((points) => {
+        if (!active) return;
         history = points ?? [];
         historyRange = minutes;
       })
       .catch(() => {
+        if (!active) return;
         history = [];
       })
       .finally(() => {
-        historyLoading = false;
+        if (active) historyLoading = false;
       });
+    return () => { active = false; };
   });
   const visibleSeries = $derived.by(() => {
     if (rangeMinutes <= 60) return (snapshot.series ?? []).slice(-rangeMinutes);

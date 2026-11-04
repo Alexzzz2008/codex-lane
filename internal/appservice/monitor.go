@@ -144,6 +144,8 @@ func (s *AppService) switchToProfile(profile model.UpstreamProfile, candidate mo
 	cfg.Upstream.Port = candidate.Port
 	s.cfg = cfg
 	s.lastProbe = time.Time{}
+	s.cachedUpstream = model.UpstreamStatus{URL: config.UpstreamURL(candidate)}
+	s.testReport = nil
 	s.mu.Unlock()
 	if err := config.Save(path, cfg); err != nil {
 		s.mu.Lock()

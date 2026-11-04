@@ -38,6 +38,8 @@
   let toastID = 0;
   let polling = true;
   let readyUpdateNotified = "";
+  let loadSequence = 0;
+  let requestRefreshTimer: number | undefined;
 
   const pages: Array<{ id: Page; label: string }> = [
     { id: "overview", label: "总览" },
@@ -74,23 +76,30 @@
   }
 
   async function load(deep = true) {
+    const sequence = ++loadSequence;
     try {
       const next = deep ? await AppService.Refresh() : await AppService.GetState();
+      if (sequence !== loadSequence) return false;
       snapshot = next;
       loadError = "";
+      return true;
     } catch (error) {
+      if (sequence !== loadSequence) return false;
       loadError = errorText(error);
       if (!snapshot) notify("error", "无法读取 Codex Lane 状态", loadError);
+      return false;
     } finally {
       loading = false;
     }
   }
 
   async function refresh() {
+    if (busy) return;
     busy = "refresh";
-    await load(true);
+    const refreshed = await load(true);
     busy = "";
-    notify("info", "状态已刷新", "已重新读取环境、上游与 Codex 进程状态");
+    if (refreshed) notify("info", "状态已刷新", "已重新读取环境、上游与 Codex 进程状态");
+    else notify("error", "刷新失败", loadError);
   }
 
   async function launch(restart = false) {
@@ -172,10 +181,15 @@
         danger: true,
         action: async () => {
           busy = "lane";
-          await AppService.StopLane();
-          await load(true);
-          busy = "";
-          notify("info", "Lane 通道已停止", "本地双入口已关闭");
+          try {
+            await AppService.StopLane();
+            await load(true);
+            notify("info", "Lane 通道已停止", "本地双入口已关闭");
+          } catch (error) {
+            notify("error", "通道停止失败", errorText(error));
+          } finally {
+            busy = "";
+          }
         },
       };
       return;
@@ -268,6 +282,7 @@
   }
 
   async function clearRequests() {
+    loadSequence++;
     busy = "clear";
     try {
       snapshot = await AppService.ClearRequests();
@@ -362,6 +377,7 @@
   }
 
   async function saveSettings(input: SettingsInput): Promise<boolean> {
+    loadSequence++;
     busy = "save";
     try {
       snapshot = await AppService.SaveSettings(input);
@@ -399,6 +415,7 @@
   }
 
   async function switchUpstream(name: string) {
+    loadSequence++;
     busy = "switch";
     try {
       snapshot = await AppService.SwitchUpstream(name);
@@ -411,6 +428,7 @@
   }
 
   async function selectFastestUpstream(): Promise<boolean> {
+    loadSequence++;
     busy = "switch";
     try {
       snapshot = await AppService.SelectFastestUpstream();
@@ -437,17 +455,16 @@
 
   onMount(() => {
     activePage = (location.hash.slice(1) as Page) in titles ? (location.hash.slice(1) as Page) : "overview";
-    load(false)
-      .then(() => load(true))
-      .then(() => checkForUpdates(true));
+    void load(false);
 
     const offRequest = Events.On("lane:request", (event: { data: { event: string; request: RequestRecord } }) => {
       const payload = event?.data;
       if (!payload?.request) return;
       upsertRequest(payload.request);
-      if (payload.event === "request:finished") {
-        window.setTimeout(() => {
-          if (polling) load(false);
+      if (payload.event === "request:finished" && requestRefreshTimer === undefined) {
+        requestRefreshTimer = window.setTimeout(() => {
+          requestRefreshTimer = undefined;
+          if (polling && !busy) void load(false);
         }, 450);
       }
     });
@@ -480,6 +497,7 @@
     return () => {
       polling = false;
       window.clearInterval(timer);
+      if (requestRefreshTimer !== undefined) window.clearTimeout(requestRefreshTimer);
       if (typeof offRequest === "function") offRequest();
       if (typeof offEvent === "function") offEvent();
       if (typeof offUpdate === "function") offUpdate();

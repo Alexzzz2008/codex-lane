@@ -30,13 +30,15 @@ func NewUpstreamDialer(upstream model.Upstream) *UpstreamDialer {
 }
 
 func (d *UpstreamDialer) Dial(ctx context.Context, target string) (net.Conn, error) {
+	ctx, cancel := context.WithTimeout(ctx, d.timeout)
+	defer cancel()
 	switch d.proxy.Protocol {
 	case model.ProtocolHTTP:
 		conn, err := d.dialTCP(ctx, d.proxyAddress())
 		if err != nil {
 			return nil, err
 		}
-		return d.connectThroughHTTP(conn, target)
+		return d.connectThroughHTTP(ctx, conn, target)
 	case model.ProtocolHTTPS:
 		conn, err := d.dialTCP(ctx, d.proxyAddress())
 		if err != nil {
@@ -50,30 +52,17 @@ func (d *UpstreamDialer) Dial(ctx context.Context, target string) (net.Conn, err
 			conn.Close()
 			return nil, fmt.Errorf("TLS handshake with upstream proxy: %w", err)
 		}
-		return d.connectThroughHTTP(tlsConn, target)
+		return d.connectThroughHTTP(ctx, tlsConn, target)
 	case model.ProtocolSOCKS5:
 		dialer, err := xproxy.SOCKS5("tcp", d.proxyAddress(), nil, &net.Dialer{Timeout: d.timeout})
 		if err != nil {
 			return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 		}
-		type result struct {
-			conn net.Conn
-			err  error
+		conn, err := dialer.(xproxy.ContextDialer).DialContext(ctx, "tcp", target)
+		if err != nil {
+			return nil, fmt.Errorf("SOCKS5 connect %s: %w", target, err)
 		}
-		ch := make(chan result, 1)
-		go func() {
-			conn, err := dialer.Dial("tcp", target)
-			ch <- result{conn: conn, err: err}
-		}()
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case res := <-ch:
-			if res.err != nil {
-				return nil, fmt.Errorf("SOCKS5 connect %s: %w", target, res.err)
-			}
-			return res.conn, nil
-		}
+		return conn, nil
 	default:
 		return nil, fmt.Errorf("unsupported upstream protocol %q", d.proxy.Protocol)
 	}
@@ -88,9 +77,20 @@ func (d *UpstreamDialer) dialTCP(ctx context.Context, address string) (net.Conn,
 	return conn, nil
 }
 
-func (d *UpstreamDialer) connectThroughHTTP(conn net.Conn, target string) (net.Conn, error) {
-	deadline := time.Now().Add(d.timeout)
+func (d *UpstreamDialer) connectThroughHTTP(ctx context.Context, conn net.Conn, target string) (net.Conn, error) {
+	deadline, _ := ctx.Deadline()
 	_ = conn.SetDeadline(deadline)
+	interrupted := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = conn.SetDeadline(time.Now())
+		close(interrupted)
+	})
+	defer func() {
+		if !stop() {
+			<-interrupted
+		}
+		_ = conn.SetDeadline(time.Time{})
+	}()
 	request := "CONNECT " + target + " HTTP/1.1\r\nHost: " + target + "\r\nProxy-Connection: keep-alive\r\n\r\n"
 	if _, err := io.WriteString(conn, request); err != nil {
 		conn.Close()
@@ -109,7 +109,6 @@ func (d *UpstreamDialer) connectThroughHTTP(conn net.Conn, target string) (net.C
 		conn.Close()
 		return nil, fmt.Errorf("upstream CONNECT returned %s", response.Status)
 	}
-	_ = conn.SetDeadline(time.Time{})
 	if reader.Buffered() > 0 {
 		return &bufferedConn{Conn: conn, reader: reader}, nil
 	}

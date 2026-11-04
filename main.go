@@ -56,7 +56,6 @@ func main() {
 	platform.AppLog("启动 v%s exe=%s replaces=%d", appservice.Version, executable, predecessor)
 	selfupdate.ReportStarted()
 	selfupdate.WaitForPredecessor()
-	install.RemovePending()
 	if predecessor > 0 {
 		// The window can only appear once the previous process released the
 		// Wails instance mutex. If it never does, put the old build back so the
@@ -133,6 +132,7 @@ func main() {
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		fitWindow(app, window)
 		platform.AppLog("窗口已显示")
+		go install.RemovePending()
 		if executable != "" {
 			selfupdate.CleanupOld(executable)
 		}

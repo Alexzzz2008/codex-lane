@@ -76,10 +76,18 @@ func CreateShortcut(target string) (string, error) {
 	shortcut := created.ToIDispatch()
 	defer shortcut.Release()
 
-	_, _ = oleutil.PutProperty(shortcut, "TargetPath", target)
-	_, _ = oleutil.PutProperty(shortcut, "WorkingDirectory", filepath.Dir(target))
-	_, _ = oleutil.PutProperty(shortcut, "IconLocation", target+",0")
-	_, _ = oleutil.PutProperty(shortcut, "Description", "Codex Lane")
+	for _, property := range []struct{ name, value string }{
+		{"TargetPath", target},
+		{"WorkingDirectory", filepath.Dir(target)},
+		{"IconLocation", target + ",0"},
+		{"Description", "Codex Lane"},
+	} {
+		result, err := oleutil.PutProperty(shortcut, property.name, property.value)
+		if err != nil {
+			return "", fmt.Errorf("设置快捷方式 %s 失败：%w", property.name, err)
+		}
+		_ = result.Clear()
+	}
 	if _, err := oleutil.CallMethod(shortcut, "Save"); err != nil {
 		return "", fmt.Errorf("保存快捷方式失败：%w", err)
 	}
@@ -89,8 +97,7 @@ func CreateShortcut(target string) (string, error) {
 	return path, nil
 }
 
-// initializeOle reports whether this call owns the COM initialization. S_FALSE
-// means COM is already initialized on this thread by an earlier caller.
+// initializeOle reports whether a successful COM call needs to be balanced.
 func initializeOle() (bool, error) {
 	err := ole.CoInitializeEx(0, ole.COINIT_APARTMENTTHREADED)
 	if err == nil {
@@ -98,7 +105,7 @@ func initializeOle() (bool, error) {
 	}
 	var oleErr *ole.OleError
 	if errors.As(err, &oleErr) && oleErr.Code() == 1 {
-		return false, nil
+		return true, nil
 	}
 	return false, err
 }

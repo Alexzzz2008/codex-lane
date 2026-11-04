@@ -142,7 +142,6 @@ func (s *AppService) installCodex() (string, error) {
 		return "winget 安装未完成，已打开官方下载页\n" + trimForDisplay(message, 400), nil
 	}
 	s.mu.Lock()
-	s.lastCodexCheck = time.Time{}
 	s.mu.Unlock()
 	return "Codex Desktop 安装完成", nil
 }

@@ -1,13 +1,11 @@
 // Package install keeps the running build in a stable directory.
 //
-// Self updates replace the executable on disk. When that executable sits on the
-// desktop, Explorer sees a brand new file and drops its icon into the first free
-// slot. Adopting a portable build into a fixed directory (the same model Magpie
-// uses with its zip releases) leaves only a shortcut on the desktop, so updates
-// never move anything the user arranged.
+// Self updates replace the executable on disk. Keeping it in a fixed directory
+// leaves the desktop shortcut intact across updates.
 package install
 
 import (
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -56,20 +54,23 @@ func Managed(executable string) bool {
 // is usually extracted into, which is exactly where icon layout breaks.
 func PortableLocation(executable string) bool {
 	directory := filepath.Dir(filepath.Clean(executable))
-	if desktop, err := DesktopDirectory(); err == nil && samePath(directory, desktop) {
+	if desktop, err := DesktopDirectory(); err == nil && within(directory, desktop) {
 		return true
 	}
 	home, err := os.UserHomeDir()
 	if err == nil {
 		for _, name := range []string{"Desktop", "Downloads"} {
-			if samePath(directory, filepath.Join(home, name)) {
+			if within(directory, filepath.Join(home, name)) {
 				return true
 			}
 		}
 	}
-	separator := string(os.PathSeparator)
-	lower := strings.ToLower(directory)
-	return strings.Contains(lower, separator+"temp"+separator) || strings.HasSuffix(lower, separator+"temp")
+	return within(directory, os.TempDir())
+}
+
+func within(path, directory string) bool {
+	relative, err := filepath.Rel(directory, path)
+	return err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(os.PathSeparator)) && !filepath.IsAbs(relative)
 }
 
 func samePath(left, right string) bool {
@@ -92,7 +93,7 @@ func Adopt(executable string) (string, error) {
 		}
 	}
 	if _, err := CreateShortcut(target); err != nil {
-		platform.AppLog("创建桌面快捷方式失败：%v", err)
+		return "", fmt.Errorf("创建桌面快捷方式失败，保留原程序：%w", err)
 	}
 	return target, nil
 }
@@ -153,6 +154,11 @@ func RemovePending() {
 		return
 	}
 	_ = os.Unsetenv(removeSourceEnv)
+	executable, err := os.Executable()
+	if err != nil || !Managed(executable) || !removableSource(source, executable) {
+		platform.AppLog("保留迁移来源文件：路径或内容校验未通过")
+		return
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {
 		err := os.Remove(source)
@@ -166,6 +172,36 @@ func RemovePending() {
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
+}
+
+func removableSource(source, executable string) bool {
+	if !filepath.IsAbs(source) || !strings.EqualFold(filepath.Ext(source), ".exe") || !PortableLocation(source) {
+		return false
+	}
+	sourceInfo, sourceErr := os.Stat(source)
+	currentInfo, currentErr := os.Stat(executable)
+	if sourceErr != nil || currentErr != nil || !sourceInfo.Mode().IsRegular() ||
+		os.SameFile(sourceInfo, currentInfo) || sourceInfo.Size() != currentInfo.Size() {
+		return false
+	}
+	sourceHash, sourceErr := executableHash(source)
+	currentHash, currentErr := executableHash(executable)
+	return sourceErr == nil && currentErr == nil && sourceHash == currentHash
+}
+
+func executableHash(path string) ([sha256.Size]byte, error) {
+	var result [sha256.Size]byte
+	file, err := os.Open(path)
+	if err != nil {
+		return result, err
+	}
+	defer file.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return result, err
+	}
+	copy(result[:], hash.Sum(nil))
+	return result, nil
 }
 
 func copyExecutable(source, target string) error {

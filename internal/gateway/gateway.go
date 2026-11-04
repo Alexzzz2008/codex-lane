@@ -41,6 +41,7 @@ type Server struct {
 	onRecord       RecordEvent
 	startedAt      time.Time
 	closeOnce      sync.Once
+	cancel         context.CancelFunc
 }
 
 type Options struct {
@@ -66,6 +67,7 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 		interfaceL.Close()
 		return nil, fmt.Errorf("start Lane kernel listener: %w", err)
 	}
+	ctx, cancel := context.WithCancel(ctx)
 	s := &Server{
 		upstream:       opts.Upstream,
 		dialer:         dialer,
@@ -80,16 +82,19 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 		kernelP:        portOf(kernelL.Addr()),
 		onRecord:       opts.OnRecord,
 		startedAt:      time.Now(),
+		cancel:         cancel,
 	}
 	s.interfaceS = &http.Server{
 		Handler:           s.handler(model.SourceInterface),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	s.kernelS = &http.Server{
 		Handler:           s.handler(model.SourceKernel),
 		ReadHeaderTimeout: 15 * time.Second,
 		IdleTimeout:       90 * time.Second,
+		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	go func() {
 		_ = s.interfaceS.Serve(interfaceL)
@@ -121,8 +126,10 @@ func (s *Server) KernelURL() string {
 func (s *Server) Close(ctx context.Context) error {
 	var err error
 	s.closeOnce.Do(func() {
-		_ = s.interfaceS.Shutdown(ctx)
-		_ = s.kernelS.Shutdown(ctx)
+		s.cancel()
+		err = errors.Join(s.interfaceS.Shutdown(ctx), s.kernelS.Shutdown(ctx))
+		_ = s.interfaceS.Close()
+		_ = s.kernelS.Close()
 		_ = s.interfaceL.Close()
 		_ = s.kernelL.Close()
 	})
@@ -253,6 +260,16 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		Upstream:  upstreamLabel(s.upstream),
 		StartedAt: started.Format(time.RFC3339Nano),
 	}
+	if err != nil {
+		record.Status = http.StatusBadRequest
+		record.Result = "failed"
+		record.Error = err.Error()
+		record.FinishedAt = time.Now().Format(time.RFC3339Nano)
+		s.emit("request:new", record)
+		s.emitFinished(record)
+		http.Error(w, "Codex Lane: invalid CONNECT target", http.StatusBadRequest)
+		return
+	}
 	if !s.hostAllowed(host) {
 		record.Status = http.StatusForbidden
 		record.Result = "blocked"
@@ -297,7 +314,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		http.Error(w, record.Error, http.StatusInternalServerError)
 		return
 	}
-	clientConn, _, err := hijacker.Hijack()
+	clientConn, buffered, err := hijacker.Hijack()
 	if err != nil {
 		upstreamConn.Close()
 		record.Status = http.StatusInternalServerError
@@ -308,6 +325,11 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		s.emitFinished(record)
 		return
 	}
+	stop := context.AfterFunc(r.Context(), func() {
+		_ = clientConn.Close()
+		_ = upstreamConn.Close()
+	})
+	defer stop()
 	if _, err := io.WriteString(clientConn, "HTTP/1.1 200 Connection Established\r\nProxy-Agent: CodexLane/0.1\r\n\r\n"); err != nil {
 		clientConn.Close()
 		upstreamConn.Close()
@@ -329,7 +351,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 	record.LatencyMs = time.Since(started).Milliseconds()
 	s.emit("request:update", record)
 
-	bytesUp, bytesDown := tunnel(clientConn, upstreamConn)
+	bytesUp, bytesDown := tunnel(&bufferedConn{Conn: clientConn, reader: buffered.Reader}, upstreamConn)
 	record.BytesUp = bytesUp
 	record.BytesDown = bytesDown
 	record.DurationMs = time.Since(started).Milliseconds()
@@ -379,6 +401,20 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 	s.emit("request:new", record)
 
 	var bytesUp, bytesDown atomic.Int64
+	transport := &http.Transport{
+		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, _, err := s.dialTarget(ctx, host, address)
+			if err != nil {
+				return nil, err
+			}
+			return &countingConn{Conn: conn, read: &bytesDown, write: &bytesUp}, nil
+		},
+		ForceAttemptHTTP2:     true,
+		TLSHandshakeTimeout:   15 * time.Second,
+		ResponseHeaderTimeout: 30 * time.Second,
+		IdleConnTimeout:       60 * time.Second,
+	}
+	defer transport.CloseIdleConnections()
 	proxy := &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			req.RequestURI = ""
@@ -387,21 +423,9 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 			}
 			removeHopByHop(req.Header)
 		},
-		Transport: &http.Transport{
-			Proxy: nil,
-			DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-				conn, _, err := s.dialTarget(ctx, host, address)
-				if err != nil {
-					return nil, err
-				}
-				return &countingConn{Conn: conn, read: &bytesDown, write: &bytesUp}, nil
-			},
-			ForceAttemptHTTP2:     true,
-			TLSHandshakeTimeout:   15 * time.Second,
-			ResponseHeaderTimeout: 30 * time.Second,
-			IdleConnTimeout:       60 * time.Second,
-		},
+		Transport: transport,
 		ModifyResponse: func(response *http.Response) error {
+			record.LatencyMs = time.Since(started).Milliseconds()
 			record.Status = response.StatusCode
 			if response.StatusCode >= 200 && response.StatusCode < 400 {
 				record.Result = "ok"
