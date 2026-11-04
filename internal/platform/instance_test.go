@@ -45,3 +45,18 @@ func TestClearInstanceKeepsForeignRecord(t *testing.T) {
 		t.Fatalf("foreign instance record was removed: %v", err)
 	}
 }
+
+func TestExplicitHomeIsolatesInstanceAndLogs(t *testing.T) {
+	t.Setenv("CODEXLANE_HOME", "")
+	primary := InstanceID()
+	home := t.TempDir()
+	t.Setenv("CODEXLANE_HOME", home)
+	isolated := InstanceID()
+	if isolated == primary || isolated != InstanceID() {
+		t.Fatal("explicit home did not produce a stable isolated instance")
+	}
+	paths, err := ResolvePaths()
+	if err != nil || paths.LogDirectory != filepath.Join(home, "logs") {
+		t.Fatalf("logs escaped explicit home: %+v, %v", paths, err)
+	}
+}

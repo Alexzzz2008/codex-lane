@@ -10,6 +10,9 @@ frontend/dist/
 *.syso
 
 # Local runtime state
+/AGENTS.md
+/agents.md
+/design/
 launcher.json
 *.log
 *.bak

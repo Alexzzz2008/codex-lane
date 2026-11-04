@@ -29,7 +29,7 @@ func MarkerPath() string {
 func StartReplacement(executable, marker string) (*Replacement, error) {
 	_ = os.Remove(marker)
 	command := exec.Command(executable)
-	command.Env = append(os.Environ(),
+	command.Env = append(cleanReplacementEnv(),
 		predecessorEnv+"="+strconv.Itoa(os.Getpid()),
 		startedEnv+"="+marker,
 	)
@@ -105,9 +105,13 @@ func PredecessorPID() int {
 // StartDetached launches a previously installed build without waiting for it.
 func StartDetached(executable string) error {
 	command := exec.Command(executable)
+	command.Env = cleanReplacementEnv()
 	command.Stdin, command.Stdout, command.Stderr = nil, nil, nil
 	detach(command)
-	return command.Start()
+	if err := command.Start(); err != nil {
+		return err
+	}
+	return command.Process.Release()
 }
 
 func WaitForPredecessor() {

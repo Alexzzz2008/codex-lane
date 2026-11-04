@@ -70,8 +70,16 @@ pwsh -File scripts/release.ps1 -SkipBuild
 
 更新包下载到 `%LOCALAPPDATA%\CodexLane\updates`，校验通过后才能安装。
 Windows 上会先把当前 exe 改名为 `.old`，放入新版本后启动新进程；新进程等待
-旧进程退出再打开窗口和 Lane 端口。启动失败时自动恢复 `.old`，下次启动会清理
-已退出的旧版本文件。
+旧进程退出再打开窗口和 Lane 端口。独立的短时更新守护进程在前端读取状态后确认
+就绪；提前退出或超时会恢复备份并启动旧版，确认成功后自动退出，不会常驻扫描。
+缓存和安装前都会验证 SHA-256；离线检查保留已验证更新，重启后恢复可用缓存。
+
+前端交互回归可在启动 Vite 后执行 `node scripts/ui-regression.mjs`。需要本机已有
+Playwright，或通过 `PLAYWRIGHT_MODULE` 指定其模块路径；`QA_URL` 与 `QA_OUTPUT`
+可覆盖页面入口和截图目录。回归使用模拟后端，不改变系统或 Codex 设置。
+
+Windows 原生窗口验收使用 `scripts/native-smoke.ps1 -Executable <构建的 exe>`，
+在独立配置和实例下检查四页、双入口、窗口操作、托盘和更新就绪确认，截图仅包含软件窗口。
 
 更新检查只读取公开 Release。仓库保持私有时，应用会明确显示“无法检查”，
 但不会影响代理、请求日志或自检功能。

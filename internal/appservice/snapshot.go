@@ -81,7 +81,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	}
 
 	wslStatus := cachedWSL
-	if deep || (engine.Resolved == model.EngineWSL && cachedWSL.Distro == "") {
+	if deep {
 		if engine.Resolved == model.EngineWSL {
 			wslStatus = preflight.Inspect(ctx, paths.UserHome, paths.CodexHome, cfg.WSLDistro)
 		} else {

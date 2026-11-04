@@ -113,7 +113,7 @@
   <div class="page-head">
     <div class="page-head-copy">
       <h1 id="overview-title">运行总览</h1>
-      <p class="page-sub">只看 Codex 的独立通道；Windows 系统代理与 TUN 始终保持原样。</p>
+      <p class="page-sub">为 Codex 提供独立代理，实时查看连接与网络状态。</p>
     </div>
     <div class="page-actions">
       {#if snapshot.settings.upstreams?.length}

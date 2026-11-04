@@ -95,7 +95,30 @@ func (m Manifest) Asset(key string) (Asset, error) {
 
 type Progress func(downloaded, total int64)
 
+func Verify(path string, asset Asset) error {
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	digest := sha256.New()
+	size, err := io.Copy(digest, io.LimitReader(file, asset.Size+1))
+	if err != nil {
+		return err
+	}
+	if size != asset.Size || !strings.EqualFold(hex.EncodeToString(digest.Sum(nil)), asset.SHA256) {
+		return errors.New("更新文件校验失败，请重新下载")
+	}
+	return nil
+}
+
 func Download(ctx context.Context, client *http.Client, asset Asset, destination string, progress Progress) error {
+	if Verify(destination, asset) == nil {
+		if progress != nil {
+			progress(asset.Size, asset.Size)
+		}
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
 		return err
 	}

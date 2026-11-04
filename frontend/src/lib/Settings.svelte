@@ -83,7 +83,9 @@
   let lastIncoming = $state("");
   let probe = $state<UpstreamStatus | null>(null);
   let copied = $state(false);
+  let copyError = $state("");
   let autosaving = $state(false);
+  let saveError = $state("");
   let pendingSave = false;
   let saveTimer: number | undefined;
   let installing = $state("");
@@ -128,12 +130,14 @@
     .join("\n");
 
   async function copyRules() {
+    copyError = "";
     try {
       await navigator.clipboard.writeText(ruleSnippet);
       copied = true;
       window.setTimeout(() => (copied = false), 2000);
     } catch {
       copied = false;
+      copyError = "复制失败，请手动选择下方规则片段复制。";
     }
   }
 
@@ -182,14 +186,16 @@
   const allowedHosts = $derived(draft.allowedHosts ?? []);
   let deps = $state<Dependency[]>([]);
   let depsLoading = $state(false);
+  let depsError = $state("");
   const missingDeps = $derived(deps.filter((item) => !item.ready).length);
 
   async function loadDependencies() {
     depsLoading = true;
+    depsError = "";
     try {
       deps = (await AppService.GetDependencies()) ?? [];
-    } catch {
-      deps = [];
+    } catch (error) {
+      depsError = `依赖检查未完成：${error instanceof Error ? error.message : String(error)}`;
     } finally {
       depsLoading = false;
     }
@@ -277,6 +283,7 @@
   }
 
   function scheduleAutoSave() {
+    saveError = "";
     dirty = true;
     if (saveTimer) window.clearTimeout(saveTimer);
     saveTimer = window.setTimeout(() => {
@@ -299,6 +306,7 @@
       return false;
     }
     autosaving = true;
+    saveError = "";
     const payload = buildPayload();
     const submitted = JSON.stringify(payload);
     try {
@@ -311,6 +319,7 @@
         if (unchanged) draft = saved;
         dirty = JSON.stringify(buildPayload()) !== baseline;
       }
+      if (!success) saveError = "保存未完成，请检查输入后重试。当前更改已保留。";
       return success;
     } finally {
       autosaving = false;
@@ -331,6 +340,7 @@
   }
 
   function cancel() {
+    saveError = "";
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveTimer = undefined;
     pendingSave = false;
@@ -449,7 +459,8 @@
   }
 
   function restoreDefaults() {
-    draft = { ...defaultDraft };
+    draft = JSON.parse(JSON.stringify(defaultDraft)) as SettingsInput;
+    saveError = "";
     dirty = true;
     probe = null;
   }
@@ -510,7 +521,7 @@
       return `正在下载 v${status.latestVersion} · ${formatBytes(status.downloaded)} / ${formatBytes(status.total)}`;
     }
     if (status.status === "ready") {
-      return `v${status.latestVersion} 已下载并通过 SHA-256 校验。重启时通道会短暂中断，Codex 不会被结束。`;
+      return `v${status.latestVersion} 已下载并校验，可立即重启更新，也会在正常退出时安装。重启更新不会结束 Codex。${status.error ? ` ${status.error}` : ""}`;
     }
     if (status.status === "installing" || status.status === "restarting") {
       return "正在替换程序并重新启动，旧版本会在失败时自动回滚。";
@@ -568,10 +579,10 @@
           </div>
         </div>
         <div class="setting-row">
-          <div class="setting-copy"><b>Lane 本地入口</b><span>双入口只监听回环地址；首次自动选空闲端口，之后固定复用，重启 Lane 不会改变 Codex 的代理端口。</span></div>
-          <div class="setting-control inline-actions">
-            <span class="input-box mono">{snapshot.lane.running ? `UI 127.0.0.1:${snapshot.lane.interfacePort}` : "UI 自动分配"}</span>
-            <span class="input-box mono">{snapshot.lane.running ? `K 127.0.0.1:${snapshot.lane.kernelPort}` : "内核自动分配"}</span>
+          <div class="setting-copy"><b>Lane 本地入口</b><span>仅监听本机。首次选择空闲端口，之后优先复用已记住的端口。</span></div>
+          <div class="setting-control local-endpoints">
+            <span class="endpoint-address"><span>界面</span><code>{snapshot.lane.running ? snapshot.lane.interfaceUrl.replace(/^http:\/\//, "") : "自动分配"}</code></span>
+            <span class="endpoint-address kernel"><span>内核</span><code>{snapshot.lane.running ? snapshot.lane.kernelUrl.replace(/^http:\/\//, "") : "自动分配"}</code></span>
           </div>
         </div>
         {#if probe}
@@ -645,7 +656,7 @@
         <div class="setting-row">
           <div class="setting-copy"><b>故障自动切换</b><span>连续两次探测失败时，自动切到第一个可用的其他档案。</span></div>
           <div class="setting-control">
-            <button class:off={!draft.autoFailover} class="switch" aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave(); }}></button>
+            <button class:off={!draft.autoFailover} class="switch" aria-pressed={draft.autoFailover} aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave(); }}></button>
             <button class="btn small" onclick={() => void runSpeedTest()} disabled={speedBusy || busy === "switch" || busy === "save"}>
               {#if speedBusy}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}
               测速
@@ -720,7 +731,8 @@
       </article>
 
       <article class="panel settings-card">
-        <div class="panel-head"><div><h2 class="panel-title">环境依赖</h2><p class="panel-sub">启动 Lane 前自动检查；缺失项可以直接安装。</p></div><div class="right"><button class="btn small" onclick={loadDependencies} disabled={depsLoading}>{depsLoading ? "检查中…" : "重新检查"}</button><span class={`result-pill ${missingDeps ? "warn" : "pass"}`}>{depsLoading ? "检测中" : missingDeps ? `${missingDeps} 项待处理` : "全部就绪"}</span></div></div>
+        <div class="panel-head"><div><h2 class="panel-title">环境依赖</h2><p class="panel-sub">启动 Lane 前自动检查；缺失项可以直接安装。</p></div><div class="right"><button class="btn small" onclick={loadDependencies} disabled={depsLoading}>{depsLoading ? "检查中…" : "重新检查"}</button><span class={`result-pill ${depsLoading ? "run" : depsError || missingDeps ? "warn" : deps.length ? "pass" : "pending"}`}>{depsLoading ? "检测中" : depsError ? "检查失败" : missingDeps ? `${missingDeps} 项待处理` : deps.length ? "全部就绪" : "尚无结果"}</span></div></div>
+        {#if depsError}<p class="entry-error" role="alert">{depsError}</p>{/if}
         <div class="rule-table">
           {#each deps as dep}
             <div class="rule-row">
@@ -759,6 +771,7 @@
           </div>
         </div>
         <pre class="rule-snippet mono">{ruleSnippet}</pre>
+        {#if copyError}<p class="entry-error" role="alert">{copyError}</p>{/if}
         <div class="setting-row" style="background:#fbfbfc">
           <div class="setting-copy"><b>还要确认两件事</b><span>策略组当前选中的必须是节点而不是 DIRECT；MATCH 兜底若不是 DIRECT，未命中的域名也会走代理。</span></div>
         </div>
@@ -777,7 +790,7 @@
           </div>
         </div>
         <div class="setting-row">
-          <div class="setting-copy"><b>检测到的 WSL</b><span>首版要求 mirrored 网络模式，NAT 会在启动前给出明确错误。</span></div>
+          <div class="setting-copy"><b>WSL 预检发行版</b><span>检查 mirrored 网络与互通；Codex 使用的发行版由其自身设置决定。</span></div>
           <div class="setting-control">
             <select class="native-select" bind:value={draft.wslDistro} onchange={scheduleAutoSave} aria-label="WSL 发行版">
               <option value="">自动选择</option>
@@ -787,13 +800,13 @@
           </div>
         </div>
         <div class="setting-row">
-          <div class="setting-copy"><b>Codex 安装位置</b><span>按完整 MSIX 包路径定位，不使用通用进程名扫描。</span></div>
+          <div class="setting-copy"><b>Codex 安装位置</b><span>仅接入 OpenAI.Codex 安装包内的程序。</span></div>
           <div class="setting-control">
             <span class="path-box" title={snapshot.codex.executablePath}><Icon name="folder" size={14} /><span>{snapshot.codex.executablePath || "未找到 OpenAI.Codex"}</span></span>
           </div>
         </div>
         <div class="setting-row">
-          <div class="setting-copy"><b>配置文件</b><span>保存在系统本地配置目录；exe 放在桌面也不会生成 launcher.json。</span></div>
+          <div class="setting-copy"><b>配置文件</b><span>保存在本机配置目录，升级后继续使用。</span></div>
           <div class="setting-control">
             <button type="button" class="path-box path-button" title="在资源管理器中显示配置文件" onclick={onOpenConfigFolder}><Icon name="file" size={14} /><span>{snapshot.environment.configPath || "未检测"}</span></button>
             <button class="btn small" onclick={onOpenConfigFolder}><Icon name="folder" size={13} />打开</button>
@@ -804,24 +817,24 @@
       <article class="panel settings-card">
         <div class="panel-head"><div><h2 class="panel-title">启动、隔离与记录</h2><p class="panel-sub">默认最小权限，所有变更都可见、可撤销。</p></div></div>
         <div class="setting-row">
-          <div class="setting-copy"><b>发现原生 Codex 时提示接入</b><span>{snapshot.codexWatchError || "支持任意启动顺序；使用窗口事件、每个进程仅核验一次，确认重启后接入。"}</span></div>
-          <div class="setting-control"><button class:off={!draft.promptCodexProxy} class="switch" aria-label="发现原生 Codex 时提示接入" onclick={() => { draft.promptCodexProxy = !draft.promptCodexProxy; scheduleAutoSave(); }}></button></div>
+          <div class="setting-copy"><b>发现原生 Codex 时提示接入</b><span>{snapshot.codexWatchError || "支持任意启动顺序。发现后先询问，可选择现在重启或稍后接入。"}</span></div>
+          <div class="setting-control"><button class:off={!draft.promptCodexProxy} class="switch" aria-pressed={draft.promptCodexProxy} aria-label="发现原生 Codex 时提示接入" onclick={() => { draft.promptCodexProxy = !draft.promptCodexProxy; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>启动 Lane 时打开 Codex</b><span>只有显式开启后才会拉起 Codex Desktop。</span></div>
-          <div class="setting-control"><button class:off={!draft.openCodex} class="switch" aria-label="启动 Lane 时打开 Codex" onclick={() => { draft.openCodex = !draft.openCodex; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.openCodex} class="switch" aria-pressed={draft.openCodex} aria-label="启动 Lane 时打开 Codex" onclick={() => { draft.openCodex = !draft.openCodex; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
-          <div class="setting-copy"><b>退出 Lane 时同步停止 Codex</b><span>只处理当前检测到的主进程，不影响其他应用。</span></div>
-          <div class="setting-control"><button class:off={!draft.stopCodexOnExit} class="switch" aria-label="退出 Lane 时同步停止 Codex" onclick={() => { draft.stopCodexOnExit = !draft.stopCodexOnExit; scheduleAutoSave(); }}></button></div>
+          <div class="setting-copy"><b>退出 Lane 时同步停止 Codex</b><span>默认关闭。开启后，退出应用会结束 Codex；更新重启时保留 Codex。</span></div>
+          <div class="setting-control"><button class:off={!draft.stopCodexOnExit} class="switch" aria-pressed={draft.stopCodexOnExit} aria-label="退出 Lane 时同步停止 Codex" onclick={() => { draft.stopCodexOnExit = !draft.stopCodexOnExit; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>关闭窗口时最小化到托盘</b><span>点关闭按钮隐藏到系统托盘，从托盘菜单退出；重启应用后生效。</span></div>
-          <div class="setting-control"><button class:off={!draft.minimizeToTray} class="switch" aria-label="关闭窗口时最小化到托盘" onclick={() => { draft.minimizeToTray = !draft.minimizeToTray; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.minimizeToTray} class="switch" aria-pressed={draft.minimizeToTray} aria-label="关闭窗口时最小化到托盘" onclick={() => { draft.minimizeToTray = !draft.minimizeToTray; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
-          <div class="setting-copy"><b>开机自动启动</b><span>写入当前用户的注册表 Run 项；改动即时生效。</span></div>
-          <div class="setting-control"><button class:off={!draft.launchAtLogin} class="switch" aria-label="开机自动启动" onclick={() => { draft.launchAtLogin = !draft.launchAtLogin; scheduleAutoSave(); }}></button></div>
+          <div class="setting-copy"><b>开机自动启动</b><span>登录 Windows 后自动打开 Lane，保存后生效。</span></div>
+          <div class="setting-control"><button class:off={!draft.launchAtLogin} class="switch" aria-pressed={draft.launchAtLogin} aria-label="开机自动启动" onclick={() => { draft.launchAtLogin = !draft.launchAtLogin; scheduleAutoSave(); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>请求元数据日志</b><span>记录域名、端口、状态、流量和耗时，不读取 HTTPS 内容。</span></div>
@@ -830,6 +843,15 @@
               <option value={7}>保留 7 天</option>
               <option value={14}>保留 14 天</option>
               <option value={30}>保留 30 天</option>
+            </select>
+          </div>
+        </div>
+        <div class="setting-row">
+          <div class="setting-copy"><b>内存日志容量</b><span>保存后立即调整，保留最近记录；不会删除磁盘日志。</span></div>
+          <div class="setting-control">
+            <select class="native-select" bind:value={draft.maxMemoryRows} onchange={scheduleAutoSave} aria-label="内存日志容量">
+              {#if ![1000, 5000, 10000, 20000].includes(draft.maxMemoryRows)}<option value={draft.maxMemoryRows}>{draft.maxMemoryRows} 条</option>{/if}
+              <option value={1000}>1,000 条</option><option value={5000}>5,000 条</option><option value={10000}>10,000 条</option><option value={20000}>20,000 条</option>
             </select>
           </div>
         </div>
@@ -845,7 +867,7 @@
             <div class="apply-row"><span class="k">内核模式</span><span class="v green">{draft.engine === "auto" ? `自动识别 · ${snapshot.engine.resolved === "wsl" ? "WSL" : "Windows"}` : draft.engine === "wsl" ? "WSL" : "Windows"}</span></div>
             <div class="apply-row"><span class="k">WSL 预检</span><span class="v green">{snapshot.wsl?.networkMode || "未使用"} · {snapshot.wsl?.interopOk ? "已通过" : "未检测"}</span></div>
             <div class="apply-row"><span class="k">系统代理</span><span class="v green">不修改</span></div>
-            <div class="apply-row"><span class="k">配置备份</span><span class="v green">写入前自动创建</span></div>
+            <div class="apply-row"><span class="k">内核切换</span><span class="v">下次启动 Codex 生效</span></div>
           </div>
           <div class="apply-actions">
             <button class="btn dark" onclick={save} disabled={!dirty || busy === "save"}>
@@ -854,6 +876,7 @@
             </button>
             <button class="btn" onclick={cancel} disabled={!dirty}>取消更改</button>
           </div>
+          {#if saveError}<p class="save-error" role="alert">{saveError}</p>{/if}
         </div>
       </div>
 
@@ -915,6 +938,11 @@
 </section>
 
 <style>
+  .local-endpoints { flex-wrap: wrap; justify-content: flex-end; }
+  .endpoint-address { display: inline-flex; align-items: center; gap: 8px; width: max-content; max-width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-soft); }
+  .endpoint-address > span { flex: none; color: var(--accent); font-size: var(--fs-xs); }
+  .endpoint-address.kernel > span { color: var(--teal); }
+  .endpoint-address code { min-width: 0; color: var(--text-2); font: var(--fs-xs)/1.5 var(--mono); overflow-wrap: anywhere; }
   .entry-list {
     margin: 0 18px 12px;
     border: 1px solid var(--line);
@@ -935,7 +963,7 @@
     background: #fbfbfc;
     border-bottom: 1px solid var(--line);
     color: var(--text-3);
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 650;
   }
   .entry-row {
@@ -958,7 +986,7 @@
   }
   .entry-index {
     color: var(--text-4);
-    font: 11px var(--mono);
+    font: var(--fs-xs) var(--mono);
     text-align: center;
   }
   .entry-actions {
@@ -970,7 +998,7 @@
   .entry-error {
     margin: -4px 20px 10px;
     color: var(--red);
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
   }
   .grid-profiles {
     grid-template-columns: 118px 88px 1fr 76px auto;
@@ -993,7 +1021,7 @@
     color: var(--text-3);
   }
   .icon-btn:hover {
-    color: var(--text-1);
+    color: var(--text);
     border-color: #d9d9e0;
   }
   .icon-btn.danger:hover {

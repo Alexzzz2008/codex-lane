@@ -125,11 +125,11 @@ func (s *Server) UpdateRouting(upstream model.Upstream, routes []model.RouteRule
 }
 
 func (s *Server) InterfaceURL() string {
-	return "http://127.0.0.1:" + fmt.Sprint(s.interfaceP)
+	return "http://" + s.interfaceL.Addr().String()
 }
 
 func (s *Server) KernelURL() string {
-	return "http://127.0.0.1:" + fmt.Sprint(s.kernelP)
+	return "http://" + s.kernelL.Addr().String()
 }
 
 func (s *Server) Close(ctx context.Context) error {
@@ -362,7 +362,12 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 	record.LatencyMs = time.Since(started).Milliseconds()
 	s.emit("request:update", record)
 
-	bytesUp, bytesDown := tunnel(&bufferedConn{Conn: clientConn, reader: buffered.Reader}, upstreamConn)
+	bytesUp, bytesDown := tunnel(&bufferedConn{Conn: clientConn, reader: buffered.Reader}, upstreamConn, func(up, down int64) {
+		progress := record
+		progress.BytesUp, progress.BytesDown = up, down
+		progress.DurationMs = time.Since(started).Milliseconds()
+		s.emit("request:update", progress)
+	})
 	record.BytesUp = bytesUp
 	record.BytesDown = bytesDown
 	record.DurationMs = time.Since(started).Milliseconds()
@@ -481,28 +486,42 @@ func (s *Server) emitFinished(record model.RequestRecord) {
 	s.emit("request:finished", record)
 }
 
-func tunnel(client net.Conn, upstream net.Conn) (int64, int64) {
+func tunnel(client net.Conn, upstream net.Conn, progress func(int64, int64)) (int64, int64) {
 	defer client.Close()
 	defer upstream.Close()
 	var bytesUp, bytesDown atomic.Int64
+	counted := &countingConn{Conn: client, read: &bytesUp, write: &bytesDown}
 	done := make(chan struct{}, 2)
 	go func() {
-		n, _ := io.Copy(upstream, client)
-		bytesUp.Store(n)
+		_, _ = io.Copy(upstream, counted)
 		if tcp, ok := upstream.(*net.TCPConn); ok {
 			_ = tcp.CloseWrite()
 		}
 		done <- struct{}{}
 	}()
 	go func() {
-		n, _ := io.Copy(client, upstream)
-		bytesDown.Store(n)
+		_, _ = io.Copy(counted, upstream)
 		if tcp, ok := client.(*net.TCPConn); ok {
 			_ = tcp.CloseWrite()
 		}
 		done <- struct{}{}
 	}()
-	<-done
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	var lastUp, lastDown int64
+	waiting := true
+	for waiting {
+		select {
+		case <-done:
+			waiting = false
+		case <-ticker.C:
+			up, down := bytesUp.Load(), bytesDown.Load()
+			if progress != nil && (up != lastUp || down != lastDown) {
+				progress(up, down)
+				lastUp, lastDown = up, down
+			}
+		}
+	}
 	_ = client.SetDeadline(time.Now())
 	_ = upstream.SetDeadline(time.Now())
 	<-done

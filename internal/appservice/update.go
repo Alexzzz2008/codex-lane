@@ -2,6 +2,7 @@ package appservice
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -46,7 +48,9 @@ func (s *AppService) DownloadUpdate() (model.UpdateStatus, error) {
 	status := s.updateStatus
 	s.mu.RUnlock()
 	if status.Status == "ready" {
-		return status, nil
+		if s.updateReadyFor(status.LatestVersion) {
+			return status, nil
+		}
 	}
 	if manifest.Version == "" || !status.Available {
 		return status, errors.New("当前没有可下载的新版本")
@@ -68,12 +72,23 @@ func (s *AppService) RestartToUpdate() (model.UpdateStatus, error) {
 	staged := s.stagedUpdate
 	version := s.stagedVersion
 	quit := s.quitFn
+	manifest := s.updateManifest
 	s.mu.RUnlock()
 	if staged == "" || version == "" {
 		return s.currentUpdateStatus(), errors.New("更新尚未下载完成")
 	}
 	if quit == nil {
 		return s.currentUpdateStatus(), errors.New("当前无法重启应用")
+	}
+	asset, err := manifest.Asset(updateAssetKey)
+	if err != nil {
+		return s.failUpdate("更新信息无效，请重新检查", err)
+	}
+	if err := selfupdate.Verify(staged, asset); err != nil {
+		s.mu.Lock()
+		s.stagedUpdate, s.stagedVersion = "", ""
+		s.mu.Unlock()
+		return s.failUpdate("更新文件校验失败，请重新下载", err)
 	}
 
 	status := s.currentUpdateStatus()
@@ -100,14 +115,12 @@ func (s *AppService) RestartToUpdate() (model.UpdateStatus, error) {
 	replacement, err := selfupdate.StartReplacement(executable, marker)
 	if err != nil {
 		platform.AppLog("启动新版本失败：%v", err)
-		_ = selfupdate.Rollback(executable, old)
-		return s.failUpdate("新版本启动失败，已回滚", err)
+		return s.rollbackUpdate(executable, old, err)
 	}
 	if err := replacement.WaitStarted(marker, 20*time.Second); err != nil {
 		platform.AppLog("新版本未报告启动：%v", err)
 		replacement.Kill()
-		_ = selfupdate.Rollback(executable, old)
-		return s.failUpdate("新版本未能启动，已回滚", err)
+		return s.rollbackUpdate(executable, old, err)
 	}
 	_ = os.Remove(marker)
 	platform.AppLog("新版本已启动，准备退出旧实例")
@@ -125,6 +138,13 @@ func (s *AppService) RestartToUpdate() (model.UpdateStatus, error) {
 	return status, nil
 }
 
+func (s *AppService) rollbackUpdate(executable, old string, cause error) (model.UpdateStatus, error) {
+	if err := selfupdate.Rollback(executable, old); err != nil {
+		return s.failUpdate("更新失败且未能回滚，请从 Releases 重新下载", errors.Join(cause, err))
+	}
+	return s.failUpdate("新版本启动失败，已恢复旧版，请重新下载更新", cause)
+}
+
 func (s *AppService) failUpdate(message string, err error) (model.UpdateStatus, error) {
 	status := s.currentUpdateStatus()
 	status.Status = "error"
@@ -138,6 +158,7 @@ func (s *AppService) startUpdateLoop() {
 	if s.ctx == nil || s.selfTest {
 		return
 	}
+	s.restoreUpdateCache()
 	go func() {
 		timer := time.NewTimer(updateStartDelay)
 		defer timer.Stop()
@@ -197,6 +218,11 @@ func (s *AppService) checkForUpdates(manual bool) {
 			case http.StatusForbidden:
 				status.Error = "GitHub 暂时限制了更新检查"
 			}
+		}
+		if previous.Status == "ready" && s.updateReadyFor(previous.LatestVersion) {
+			previous.Error = status.Error + "；已下载的更新仍可安装"
+			previous.CheckedAt = checking.CheckedAt
+			status = previous
 		}
 		s.setUpdateStatus(status)
 		if manual && status.Status == "error" {
@@ -275,7 +301,7 @@ func (s *AppService) downloadUpdate(manifest selfupdate.Manifest) {
 		s.failDownload(manifest.Version, errors.New("无法定位更新目录"))
 		return
 	}
-	destination := filepath.Join(paths.LocalAppData, "CodexLane", "updates",
+	destination := filepath.Join(s.updateDirectory(),
 		fmt.Sprintf("CodexLane-%s-windows-amd64.exe", manifest.Version))
 
 	status := s.currentUpdateStatus()
@@ -302,6 +328,11 @@ func (s *AppService) downloadUpdate(manifest selfupdate.Manifest) {
 	if err != nil {
 		s.failDownload(manifest.Version, err)
 		return
+	}
+	if data, err := json.Marshal(manifest); err == nil {
+		if err := os.WriteFile(filepath.Join(s.updateDirectory(), "ready.json"), data, 0o600); err != nil {
+			platform.AppLog("更新缓存记录保存失败：%v", err)
+		}
 	}
 
 	s.mu.Lock()
@@ -335,33 +366,75 @@ func (s *AppService) failDownload(version string, err error) {
 
 func (s *AppService) updateReadyFor(version string) bool {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if s.stagedVersion != version || s.stagedUpdate == "" {
+	stagedVersion, staged, manifest := s.stagedVersion, s.stagedUpdate, s.updateManifest
+	s.mu.RUnlock()
+	if stagedVersion != version || staged == "" {
 		return false
 	}
-	_, err := os.Stat(s.stagedUpdate)
-	return err == nil
+	asset, err := manifest.Asset(updateAssetKey)
+	return err == nil && selfupdate.Verify(staged, asset) == nil
+}
+
+func (s *AppService) updateDirectory() string {
+	paths := s.currentPaths()
+	base := filepath.Join(paths.LocalAppData, "CodexLane")
+	if paths.ConfigPath != "" {
+		base = filepath.Dir(paths.ConfigPath)
+	}
+	return filepath.Join(base, "updates")
+}
+
+func (s *AppService) restoreUpdateCache() {
+	data, err := os.ReadFile(filepath.Join(s.updateDirectory(), "ready.json"))
+	if err != nil {
+		return
+	}
+	var manifest selfupdate.Manifest
+	if json.Unmarshal(data, &manifest) != nil || !isVersion(manifest.Version) || compareVersions(manifest.Version, Version) <= 0 {
+		return
+	}
+	asset, err := manifest.Asset(updateAssetKey)
+	if err != nil {
+		return
+	}
+	staged := filepath.Join(s.updateDirectory(), fmt.Sprintf("CodexLane-%s-windows-amd64.exe", manifest.Version))
+	if selfupdate.Verify(staged, asset) != nil {
+		return
+	}
+	s.mu.Lock()
+	s.updateManifest, s.stagedUpdate, s.stagedVersion = manifest, staged, manifest.Version
+	s.mu.Unlock()
+	status, _ := evaluateManifest(manifest, Version, "")
+	status.Status, status.Downloaded = "ready", asset.Size
+	s.setUpdateStatus(status)
 }
 
 func (s *AppService) clearStaleUpdate(version string) {
 	s.mu.Lock()
 	staged := s.stagedUpdate
 	stagedVersion := s.stagedVersion
-	if stagedVersion != "" && compareVersions(stagedVersion, version) <= 0 {
+	if stagedVersion != "" {
 		s.stagedUpdate = ""
 		s.stagedVersion = ""
 	}
 	s.mu.Unlock()
-	if staged != "" && stagedVersion != "" && compareVersions(stagedVersion, version) <= 0 {
+	if staged != "" && stagedVersion != "" {
 		_ = os.Remove(staged)
 	}
+	_ = os.Remove(filepath.Join(s.updateDirectory(), "ready.json"))
 }
 
 func (s *AppService) installUpdateOnExit() {
 	s.mu.RLock()
 	staged := s.stagedUpdate
+	manifest := s.updateManifest
 	s.mu.RUnlock()
 	if staged == "" {
+		return
+	}
+	asset, err := manifest.Asset(updateAssetKey)
+	if err != nil || selfupdate.Verify(staged, asset) != nil {
+		platform.AppLog("退出时取消安装：更新文件或清单校验失败")
 		return
 	}
 	executable, err := selfupdate.Executable()
@@ -427,21 +500,10 @@ func versionFromReleaseURL(value string) string {
 	return strings.TrimSpace(parts[len(parts)-1])
 }
 
+var versionPattern = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?(\+[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?$`)
+
 func isVersion(value string) bool {
-	parts := strings.SplitN(strings.TrimPrefix(strings.TrimSpace(value), "v"), "-", 2)
-	core := strings.Split(parts[0], ".")
-	if len(core) == 0 {
-		return false
-	}
-	for _, part := range core {
-		if part == "" {
-			return false
-		}
-		if _, err := strconv.Atoi(part); err != nil {
-			return false
-		}
-	}
-	return true
+	return versionPattern.MatchString(strings.TrimPrefix(strings.TrimSpace(value), "v"))
 }
 
 // CompareVersions reports whether left is newer than right.
@@ -473,13 +535,38 @@ func compareVersions(left, right string) int {
 		return 1
 	case leftPre != "" && rightPre == "":
 		return -1
-	case leftPre > rightPre:
-		return 1
-	case leftPre < rightPre:
-		return -1
-	default:
-		return 0
 	}
+	a, b := strings.Split(leftPre, "."), strings.Split(rightPre, ".")
+	for i := 0; i < min(len(a), len(b)); i++ {
+		if a[i] == b[i] {
+			continue
+		}
+		x, xe := strconv.Atoi(a[i])
+		y, ye := strconv.Atoi(b[i])
+		if xe == nil && ye == nil {
+			if x > y {
+				return 1
+			}
+			return -1
+		}
+		if xe == nil {
+			return -1
+		}
+		if ye == nil {
+			return 1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	return 0
 }
 
 func versionParts(value string) ([]int, string) {

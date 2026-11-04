@@ -7,6 +7,12 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $serviceFile = Join-Path $root "internal/appservice/service.go"
 
+if (-not $SkipBuild) {
+    if ($Version) { & (Join-Path $PSScriptRoot "build.ps1") -Version $Version }
+    else { & (Join-Path $PSScriptRoot "build.ps1") }
+    if ($LASTEXITCODE -ne 0) { throw "build failed with exit code $LASTEXITCODE" }
+}
+
 if (-not $Version) {
     $match = Select-String -Path $serviceFile -Pattern 'const Version = "([^"]+)"' | Select-Object -First 1
     if (-not $match) {
@@ -19,11 +25,6 @@ $infoFile = Join-Path $root "build/windows/info.json"
 $info = Get-Content $infoFile -Raw | ConvertFrom-Json
 if ($info.info.'0409'.ProductVersion -ne $Version) {
     throw "build/windows/info.json is $($info.info.'0409'.ProductVersion), expected $Version"
-}
-
-if (-not $SkipBuild) {
-    & (Join-Path $PSScriptRoot "build.ps1") -NoBump
-    if ($LASTEXITCODE -ne 0) { throw "build failed with exit code $LASTEXITCODE" }
 }
 
 $exe = Join-Path $root "bin/CodexLane-$Version.exe"

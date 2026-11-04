@@ -46,6 +46,20 @@
   const pendingRequests = new Map<string, RequestRecord>();
   let promptedCodexPID = $state(0);
 
+  function focusDialog(node: HTMLElement) {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const buttons = () => Array.from(node.querySelectorAll<HTMLElement>('button:not(:disabled), [href], input, select, [tabindex="0"]'));
+    buttons()[0]?.focus();
+    const trap = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const items = buttons();
+      if (event.shiftKey && document.activeElement === items[0]) { event.preventDefault(); items.at(-1)?.focus(); }
+      else if (!event.shiftKey && document.activeElement === items.at(-1)) { event.preventDefault(); items[0]?.focus(); }
+    };
+    node.addEventListener("keydown", trap);
+    return { destroy() { node.removeEventListener("keydown", trap); if (previous?.isConnected) previous.focus(); } };
+  }
+
   function promptCodexProxy(pid: number) {
     promptedCodexPID = pid;
     modal = {
@@ -80,7 +94,7 @@
 
   function notify(kind: Toast["kind"], title: string, detail = "") {
     const id = ++toastID;
-    toasts = [...toasts, { id, kind, title, detail }].slice(-4);
+    toasts = [...toasts, { id, kind, title, detail }].slice(-2);
     window.setTimeout(() => {
       toasts = toasts.filter((toast) => toast.id !== id);
     }, kind === "error" ? 6500 : 4200);
@@ -102,7 +116,7 @@
   async function load(deep = true) {
     const sequence = ++loadSequence;
     try {
-      const next = deep ? await AppService.Refresh() : await AppService.GetState();
+      const next = !snapshot ? await AppService.Bootstrap() : deep ? await AppService.Refresh() : await AppService.GetState();
       if (sequence !== loadSequence) return false;
       snapshot = next;
       loadError = "";
@@ -541,17 +555,16 @@
     </div>
   </div>
 {:else if snapshot}
-  <div class="window">
+  <div class="window" inert={modal !== null}>
     <header class="appbar">
       <a class="brand" href="#overview" aria-label="Codex Lane 首页" onclick={(event) => { event.preventDefault(); navigate("overview"); }}>
         <span class="brand-mark"><Icon name="mark" size={25} /></span>
         <span class="brand-name">Codex <span>Lane</span></span>
-        <span class="brand-edition">LOCAL</span>
       </a>
 
       <nav class="nav" aria-label="主导航">
         {#each pages as page}
-          <button class:active={activePage === page.id} onclick={() => navigate(page.id)}>{page.label}</button>
+          <button class:active={activePage === page.id} aria-current={activePage === page.id ? "page" : undefined} onclick={() => navigate(page.id)}>{page.label}</button>
         {/each}
       </nav>
 
@@ -623,6 +636,7 @@
         aria-modal="true"
         aria-labelledby="lane-modal-title"
         tabindex="-1"
+        use:focusDialog
         onclick={(event) => event.stopPropagation()}
         onkeydown={(event) => { if (event.key === "Escape") modal = null; }}
       >

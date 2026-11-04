@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -189,5 +190,36 @@ func TestSavingManualEngineWritesAnAbsentSetting(t *testing.T) {
 	state, err := codex.ReadEngine(filepath.Join(service.paths.CodexHome, "config.toml"))
 	if err != nil || !state.Present || !state.WSL {
 		t.Fatalf("manual WSL selection was not written: %+v, error=%v", state, err)
+	}
+}
+
+func TestInvalidConfigurationIsNotOverwrittenByPortMemory(t *testing.T) {
+	service := newProxyTestService(t)
+	broken := []byte("{broken user configuration")
+	if err := os.WriteFile(service.paths.ConfigPath, broken, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service.initError = "invalid configuration"
+	if err := service.StartLane(); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(service.paths.ConfigPath)
+	if err != nil || string(got) != string(broken) {
+		t.Fatalf("configuration was overwritten: %q, %v", got, err)
+	}
+}
+
+func TestFailedSettingsSaveDoesNotChangeCodexEngine(t *testing.T) {
+	service := newProxyTestService(t)
+	service.paths.ConfigPath = t.TempDir()
+	input := model.SettingsInput(config.Settings(service.cfg))
+	input.Engine = model.EngineWSL
+	input.LaunchAtLogin = platform.IsAutoStart()
+	if _, err := service.SaveSettings(input); err == nil {
+		t.Fatal("expected a save failure")
+	}
+	state, err := codex.ReadEngine(filepath.Join(service.paths.CodexHome, "config.toml"))
+	if err != nil || state.Present {
+		t.Fatalf("failed save changed Codex: %+v, %v", state, err)
 	}
 }

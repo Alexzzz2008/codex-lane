@@ -63,3 +63,13 @@ func TestApplySettingsUpdatesActiveProfileFromTopFields(t *testing.T) {
 		t.Fatalf("active profile not updated: %+v", cfg.Upstreams)
 	}
 }
+
+func TestRejectInvalidOrRecursiveLanePorts(t *testing.T) {
+	for _, ports := range [][2]int{{-1, 0}, {0, 65536}, {7897, 0}, {0, 7897}, {40000, 40000}} {
+		cfg := Default()
+		cfg.Lane.InterfacePort, cfg.Lane.KernelPort = ports[0], ports[1]
+		if err := Validate(cfg); err == nil {
+			t.Fatalf("accepted invalid ports %v", ports)
+		}
+	}
+}

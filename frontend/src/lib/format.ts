@@ -47,8 +47,8 @@ export function engineLabel(engine: string): string {
 }
 
 export function sourceLabel(source: string): string {
-  if (source === "kernel") return "WSL 内核";
-  if (source === "interface") return "Codex Desktop";
+  if (source === "kernel") return "内核入口";
+  if (source === "interface") return "界面入口";
   if (source === "self-test") return "诊断";
   return source || "未知";
 }

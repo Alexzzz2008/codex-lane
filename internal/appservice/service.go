@@ -24,7 +24,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.41"
+const Version = "0.1.44"
 
 type Emitter func(name string, data ...any)
 
@@ -137,6 +137,11 @@ func (s *AppService) ServiceShutdown() error {
 	installPath := s.cachedCodex.InstallLocation
 	pid := s.cachedCodex.MainPID
 	s.mu.RUnlock()
+	if executable, err := selfupdate.Executable(); err == nil {
+		if _, err := os.Stat(executable + ".update.json"); err == nil {
+			stopCodex = false
+		}
+	}
 	if stopCodex && pid > 0 {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -147,7 +152,15 @@ func (s *AppService) ServiceShutdown() error {
 }
 
 func (s *AppService) Bootstrap() (model.Snapshot, error) {
-	return s.Refresh()
+	state, err := s.GetState()
+	if err == nil {
+		if executable, exeErr := selfupdate.Executable(); exeErr == nil {
+			if readyErr := selfupdate.ReportReady(executable); readyErr != nil {
+				platform.AppLog("更新界面就绪确认失败：%v", readyErr)
+			}
+		}
+	}
+	return state, err
 }
 
 //wails:ignore
@@ -190,6 +203,7 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	defer s.operationMu.Unlock()
 	s.mu.Lock()
 	cfg := s.cfg
+	previousConfig := cfg
 	cfgPath := s.paths.ConfigPath
 	codexConfig := filepath.Join(s.paths.CodexHome, "config.toml")
 	previousEngine := s.cfg.Engine
@@ -198,36 +212,81 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	previousAllowed := s.cfg.Lane.AllowedHosts
 	previousFilter := s.cfg.Lane.HostFilterMode
 	previousAutoStart := platform.IsAutoStart()
+	loadFailed := s.initError != ""
+	store := s.store
 	s.mu.Unlock()
 
 	if err := config.ApplySettings(&cfg, input); err != nil {
 		return model.Snapshot{}, err
 	}
+	if lane := s.currentLane(); lane != nil {
+		cfg.Lane.InterfacePort, cfg.Lane.KernelPort = lane.InterfacePort(), lane.KernelPort()
+		if err := config.Validate(cfg); err != nil {
+			return model.Snapshot{}, err
+		}
+	}
 	engine, err := codex.ResolveEngine(cfg, codexConfig)
 	if err != nil && cfg.Engine != model.EngineAuto {
 		return model.Snapshot{}, err
+	}
+	oldUpstream := config.UpstreamURL(previousConfig.Upstream)
+	brokenBackup := ""
+	if loadFailed {
+		if data, err := os.ReadFile(cfgPath); err == nil {
+			brokenBackup = cfgPath + ".bak-" + time.Now().Format("20060102-150405.000000000")
+			if err := os.WriteFile(brokenBackup, data, 0o600); err != nil {
+				return model.Snapshot{}, fmt.Errorf("备份原配置失败：%w", err)
+			}
+		}
+	}
+	if err := config.Save(cfgPath, cfg); err != nil {
+		return model.Snapshot{}, err
+	}
+	rollback := func(cause error) (model.Snapshot, error) {
+		var err error
+		if brokenBackup != "" {
+			err = os.Rename(brokenBackup, cfgPath)
+		} else {
+			err = config.Save(cfgPath, previousConfig)
+		}
+		if err != nil {
+			cause = errors.Join(cause, fmt.Errorf("恢复 Lane 配置失败：%w", err))
+		}
+		if input.LaunchAtLogin != previousAutoStart {
+			cause = errors.Join(cause, platform.SetAutoStart(previousAutoStart))
+		}
+		return model.Snapshot{}, cause
+	}
+	if input.LaunchAtLogin != previousAutoStart {
+		if err := platform.SetAutoStart(input.LaunchAtLogin); err != nil {
+			return rollback(fmt.Errorf("开机自启设置失败：%w", err))
+		}
 	}
 	if cfg.Engine != model.EngineAuto {
 		targetWSL := cfg.Engine == model.EngineWSL
 		if !engine.KeyPresent || engine.KeyValue != targetWSL {
 			if _, err := codex.SetEngine(codexConfig, targetWSL); err != nil {
-				return model.Snapshot{}, fmt.Errorf("switch Codex engine: %w", err)
+				return rollback(fmt.Errorf("切换 Codex 环境失败：%w", err))
 			}
 			s.addEvent("info", "内核环境已切换", "写入前已备份 config.toml")
+			engine.KeyPresent, engine.KeyValue = true, targetWSL
 		}
-	}
-	oldUpstream := config.UpstreamURL(s.currentConfig().Upstream)
-	if err := config.Save(cfgPath, cfg); err != nil {
-		return model.Snapshot{}, err
 	}
 	s.mu.Lock()
 	s.cfg = cfg
 	s.initError = ""
+	engineChanged := previousEngine != cfg.Engine || previousDistro != cfg.WSLDistro
+	if engineChanged {
+		s.cachedEngine = engine
+		s.cachedWSL = model.WSLStatus{Distro: cfg.WSLDistro}
+		s.testReport = nil
+	}
 	s.mu.Unlock()
-	if input.LaunchAtLogin != previousAutoStart {
-		if err := platform.SetAutoStart(input.LaunchAtLogin); err != nil {
-			s.addEvent("error", "开机自启设置失败", err.Error())
-		}
+	if store != nil {
+		store.Resize(cfg.Logging.MaxMemoryRows)
+	}
+	if previousConfig.Logging.RetentionDays != cfg.Logging.RetentionDays {
+		go s.cleanRetention()
 	}
 	newUpstream := config.UpstreamURL(cfg.Upstream)
 	if oldUpstream != newUpstream {
@@ -247,8 +306,7 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	s.configureCodexWatch()
 	refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 8*time.Second)
 	defer refreshCancel()
-	engineChanged := previousEngine != cfg.Engine || previousDistro != cfg.WSLDistro
-	return s.snapshotWith(refreshCtx, engineChanged, false), nil
+	return s.snapshotWith(refreshCtx, false, false), nil
 }
 
 func sameRoutes(a, b []model.RouteRule) bool {
@@ -325,7 +383,7 @@ func (s *AppService) startLane(cfg model.Config) error {
 
 func (s *AppService) persistLanePorts(lane *gateway.Server) {
 	s.mu.Lock()
-	if s.selfTest {
+	if s.selfTest || s.initError != "" {
 		s.mu.Unlock()
 		return
 	}
@@ -462,6 +520,8 @@ func proxyLabel(url string) string {
 }
 
 func (s *AppService) StopCodex() (model.Snapshot, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	pkg, err := codex.Locate(ctx)
@@ -524,11 +584,11 @@ func (s *AppService) ClearRequests() (model.Snapshot, error) {
 	if store != nil {
 		store.Clear()
 	}
-	return s.Refresh()
+	return s.GetState()
 }
 
 func (s *AppService) ExportReport() (string, error) {
-	snapshot, err := s.Refresh()
+	snapshot, err := s.GetState()
 	if err != nil {
 		return "", err
 	}

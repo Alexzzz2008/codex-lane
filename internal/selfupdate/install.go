@@ -63,6 +63,9 @@ func Install(staged, executable string) (string, error) {
 	// The staged copy is hidden while it sits next to the running executable;
 	// clear the attribute so the installed file stays visible in Explorer.
 	unhideFile(executable)
+	if err := writeRecovery(executable, old, os.Getpid()); err != nil {
+		return "", errors.Join(fmt.Errorf("create update recovery: %w", err), Rollback(executable, old))
+	}
 	_ = removeWithRetry(staged)
 	return old, nil
 }
@@ -73,6 +76,9 @@ func Rollback(executable, old string) error {
 	if old == "" {
 		return errors.New("no previous executable to restore")
 	}
+	if _, err := os.Stat(old); err != nil {
+		return fmt.Errorf("previous executable unavailable: %w", err)
+	}
 	if err := removeWithRetry(executable); err != nil && !errors.Is(err, os.ErrNotExist) {
 		if renameErr := moveWithRetry(executable, executable+".blocked"); renameErr != nil {
 			return fmt.Errorf("remove failed update: %w", err)
@@ -81,10 +87,15 @@ func Rollback(executable, old string) error {
 	if err := moveWithRetry(old, executable); err != nil {
 		return fmt.Errorf("restore previous executable: %w", err)
 	}
+	unhideFile(executable)
+	clearRecovery(executable)
 	return nil
 }
 
 func CleanupOld(executable string) {
+	if _, err := os.Stat(executable + ".update.json"); err == nil {
+		return
+	}
 	removeStaleOld(executable + ".old")
 	matches, _ := filepath.Glob(executable + ".old-*")
 	for _, match := range matches {
@@ -118,6 +129,7 @@ func RestorePrevious(executable string) (string, error) {
 		return "", fmt.Errorf("restore previous executable: %w", err)
 	}
 	unhideFile(executable)
+	clearRecovery(executable)
 	return executable, nil
 }
 

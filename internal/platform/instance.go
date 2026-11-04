@@ -1,12 +1,27 @@
 package platform
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 )
+
+func InstanceID() string {
+	id := "io.github.alexzzz2008.codexlane"
+	if override := strings.TrimSpace(os.Getenv("CODEXLANE_HOME")); override != "" {
+		absolute, err := filepath.Abs(override)
+		if err == nil {
+			override = absolute
+		}
+		sum := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(override))))
+		id += fmt.Sprintf(".%x", sum[:8])
+	}
+	return id
+}
 
 // Instance records the process that currently owns the desktop window, so a
 // second launch can tell whether it is older or newer than the running one.

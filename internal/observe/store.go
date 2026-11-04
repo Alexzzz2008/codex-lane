@@ -22,6 +22,7 @@ type Store struct {
 	count   int
 	byID    map[string]int
 	maxRows int
+	active  map[string]requestProgress
 
 	logMu   sync.Mutex
 	logDir  string
@@ -50,6 +51,12 @@ type bucket struct {
 	count int64
 }
 
+type requestProgress struct {
+	up, down int64
+	result   int
+	latency  bool
+}
+
 const bucketCount = 60
 
 func NewStore(maxRows int, logDir string, notify func(event string, record model.RequestRecord)) *Store {
@@ -60,6 +67,7 @@ func NewStore(maxRows int, logDir string, notify func(event string, record model
 		maxRows: maxRows,
 		notify:  notify,
 		byID:    make(map[string]int),
+		active:  make(map[string]requestProgress),
 		records: make([]model.RequestRecord, maxRows),
 		logDir:  logDir,
 	}
@@ -67,6 +75,31 @@ func NewStore(maxRows int, logDir string, notify func(event string, record model
 		_ = os.MkdirAll(logDir, 0o700)
 	}
 	return s
+}
+
+func (s *Store) Resize(maxRows int) {
+	if maxRows < 100 || maxRows > 100000 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if maxRows == s.maxRows {
+		return
+	}
+	count := min(s.count, maxRows)
+	records := make([]model.RequestRecord, maxRows)
+	byID := make(map[string]int, count)
+	for index := 0; index < count; index++ {
+		record := s.records[(s.start+s.count-count+index)%s.maxRows]
+		records[index] = record
+		byID[record.ID] = index
+	}
+	s.records, s.byID, s.maxRows = records, byID, maxRows
+	s.start, s.count = 0, count
+	if len(s.latencies) > maxRows {
+		s.latencies = append([]int64(nil), s.latencies[len(s.latencies)-maxRows:]...)
+		s.latDirty = true
+	}
 }
 
 func (s *Store) Add(record model.RequestRecord) {
@@ -87,6 +120,7 @@ func (s *Store) Add(record model.RequestRecord) {
 	s.records[position] = record
 	s.byID[record.ID] = s.start + s.count
 	s.count++
+	s.account(record)
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify("request:new", record)
@@ -98,6 +132,7 @@ func (s *Store) Touch(record model.RequestRecord) {
 	if idx, ok := s.byID[record.ID]; ok {
 		s.records[idx%s.maxRows] = record
 	}
+	s.account(record)
 	s.mu.Unlock()
 	if s.notify != nil {
 		s.notify("request:update", record)
@@ -109,26 +144,11 @@ func (s *Store) Finish(record model.RequestRecord) {
 	if idx, ok := s.byID[record.ID]; ok {
 		s.records[idx%s.maxRows] = record
 	}
-	s.total++
-	if record.Result == "ok" || (record.Status >= 200 && record.Status < 400) {
-		s.success++
-	} else {
-		s.failed++
+	if record.Result == "" && record.Status == 0 {
+		record.Result = "failed"
 	}
-	s.bytesUp += record.BytesUp
-	s.bytesDown += record.BytesDown
-	minute := time.Now().Truncate(time.Minute)
-	b := s.bucketAt(minute)
-	b.down += record.BytesDown
-	b.lat += recordLatency(record)
-	b.count++
-	if latency := recordLatency(record); latency > 0 {
-		s.latencies = append(s.latencies, latency)
-		if len(s.latencies) > s.maxRows {
-			s.latencies = s.latencies[1:]
-		}
-		s.latDirty = true
-	}
+	s.account(record)
+	delete(s.active, record.ID)
 	s.mu.Unlock()
 	if s.logDir != "" {
 		s.append(record)
@@ -136,6 +156,48 @@ func (s *Store) Finish(record model.RequestRecord) {
 	if s.notify != nil {
 		s.notify("request:update", record)
 	}
+}
+
+func (s *Store) account(record model.RequestRecord) {
+	previous, exists := s.active[record.ID]
+	if !exists {
+		s.total++
+	}
+	up, down := max(int64(0), record.BytesUp-previous.up), max(int64(0), record.BytesDown-previous.down)
+	s.bytesUp += up
+	s.bytesDown += down
+	b := s.bucketAt(time.Now().Truncate(time.Minute))
+	b.down += down
+	result := 0
+	if record.Result == "ok" || (record.Status >= 200 && record.Status < 400) {
+		result = 1
+	} else if record.Result == "failed" || record.Result == "blocked" || record.Status >= 400 {
+		result = -1
+	}
+	if result != previous.result {
+		if previous.result == 1 {
+			s.success--
+		}
+		if previous.result == -1 {
+			s.failed--
+		}
+		if result == 1 {
+			s.success++
+		}
+		if result == -1 {
+			s.failed++
+		}
+	}
+	if latency := recordLatency(record); latency > 0 && !previous.latency {
+		b.lat += latency
+		b.count++
+		s.latencies = append(s.latencies, latency)
+		if len(s.latencies) > s.maxRows {
+			s.latencies = s.latencies[1:]
+		}
+		s.latDirty, previous.latency = true, true
+	}
+	s.active[record.ID] = requestProgress{up: record.BytesUp, down: record.BytesDown, result: result, latency: previous.latency}
 }
 
 func (s *Store) bucketAt(minute time.Time) *bucket {
@@ -307,8 +369,10 @@ func (s *Store) Series() []model.RequestSeriesPoint {
 		b := s.buckets[index]
 		lat := int64(0)
 		down := int64(0)
-		if b.start.Equal(minute) && b.count > 0 {
-			lat = b.lat / b.count
+		if b.start.Equal(minute) {
+			if b.count > 0 {
+				lat = b.lat / b.count
+			}
 			down = b.down
 		}
 		out = append(out, model.RequestSeriesPoint{
@@ -328,7 +392,12 @@ func (s *Store) Clear() {
 	s.latencies = nil
 	s.latSorted = nil
 	s.latDirty = false
-	s.total = 0
+	s.total = int64(len(s.active))
+	for id, progress := range s.active {
+		progress.result = 0
+		progress.latency = false
+		s.active[id] = progress
+	}
 	s.success = 0
 	s.failed = 0
 	s.bytesUp = 0

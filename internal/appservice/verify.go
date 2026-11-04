@@ -43,7 +43,7 @@ func (s *AppService) runTests(ctx context.Context) model.TestReport {
 	groupA := "network"
 	laneURL := snapshot.Lane.InterfaceURL
 	if snapshot.Lane.Running {
-		address := fmt.Sprintf("127.0.0.1:%d", snapshot.Lane.InterfacePort)
+		address := net.JoinHostPort(s.currentConfig().Lane.ListenHost, fmt.Sprint(snapshot.Lane.InterfacePort))
 		latency, err := gateway.CheckTCPService(ctx, address)
 		if err != nil {
 			add("A1", groupA, "Lane 本地监听", "FAIL", err.Error(), latency.Milliseconds(), "重启 Lane 或检查本地端口占用")
@@ -54,7 +54,7 @@ func (s *AppService) runTests(ctx context.Context) model.TestReport {
 		add("A1", groupA, "Lane 本地监听", "FAIL", "Lane 未运行", 0, "先在总览页开启通道")
 	}
 
-	upstreamAddress := fmt.Sprintf("%s:%d", snapshot.Settings.Host, snapshot.Settings.Port)
+	upstreamAddress := net.JoinHostPort(snapshot.Settings.Host, fmt.Sprint(snapshot.Settings.Port))
 	latency, err := gateway.CheckTCPService(ctx, upstreamAddress)
 	if err != nil {
 		add("A2", groupA, "上游端口监听", "FAIL", err.Error(), latency.Milliseconds(), "确认代理软件正在监听所选端口")

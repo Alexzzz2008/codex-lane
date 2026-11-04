@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"errors"
 	"os"
 
 	"golang.org/x/sys/windows/registry"
@@ -27,16 +28,23 @@ func SetAutoStart(enable bool) error {
 	if !enable {
 		key, err := registry.OpenKey(registry.CURRENT_USER, autoStartPath, registry.SET_VALUE)
 		if err != nil {
-			return nil
+			if errors.Is(err, registry.ErrNotExist) {
+				return nil
+			}
+			return err
 		}
 		defer key.Close()
-		return key.DeleteValue(autoStartValue)
+		err = key.DeleteValue(autoStartValue)
+		if errors.Is(err, registry.ErrNotExist) {
+			return nil
+		}
+		return err
 	}
 	exe, err := os.Executable()
 	if err != nil {
 		return err
 	}
-	key, err := registry.OpenKey(registry.CURRENT_USER, autoStartPath, registry.SET_VALUE)
+	key, _, err := registry.CreateKey(registry.CURRENT_USER, autoStartPath, registry.SET_VALUE)
 	if err != nil {
 		return err
 	}

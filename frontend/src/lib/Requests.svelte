@@ -20,7 +20,7 @@
   }: {
     snapshot: Snapshot;
     busy?: string;
-    onClear: () => void;
+    onClear: () => Promise<void>;
     onExport: () => void;
   } = $props();
 
@@ -45,7 +45,7 @@
   const stats = $derived(snapshot.stats);
   const filtered = $derived(
     frozen.filter((request) => {
-      const haystack = `${request.host} ${request.source} ${request.method} ${request.status} ${request.error}`.toLowerCase();
+      const haystack = `${request.host} ${request.source} ${sourceLabel(request.source)} ${request.process} ${request.method} ${request.status} ${request.error}`.toLowerCase();
       const matchesQuery = !query.trim() || haystack.includes(query.trim().toLowerCase());
       const abnormal = isAbnormal(request);
       return matchesQuery && (filter === "all" || abnormal);
@@ -65,6 +65,13 @@
     if (request.result === "failed" || Number(request.status) >= 400) return "fail";
     if (request.result !== "ok") return "warn";
     return "pass";
+  }
+
+  function routeLabel(request: RequestRecord): string {
+    if (request.result === "blocked") return "已拦截";
+    if (isAbnormal(request)) return "连接失败";
+    if (request.status < 200) return "连接中";
+    return request.upstream === "DIRECT" ? "按规则直连" : "经上游代理";
   }
 
   function bytesLabel(request: RequestRecord): string {
@@ -122,7 +129,7 @@
         {#if harBusy}<span class="spin"><Icon name="refresh" size={15} /></span>{:else}<Icon name="download" size={15} />{/if}
         {harCopied ? "已复制" : "导出 HAR"}
       </button>
-      <button class="btn" onclick={onClear} disabled={busy === "clear" || !frozen.length}>
+      <button class="btn" onclick={async () => { await onClear(); frozen = snapshot.requests ?? []; }} disabled={busy === "clear" || !frozen.length}>
         <Icon name="x" size={15} />
         清空
       </button>
@@ -177,9 +184,9 @@
           </thead>
           <tbody>
             {#each filtered as request}
-              <tr class:selected={selected?.id === request.id} onclick={() => (selectedId = request.id)}>
+              <tr class:selected={selected?.id === request.id} aria-selected={selected?.id === request.id} tabindex="0" onclick={() => (selectedId = request.id)} onkeydown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); selectedId = request.id; } }}>
                 <td class="cell-time">{request.time}</td>
-                <td class="cell-host"><b>{compactHost(request.host, 38)}:{request.port}</b><span>{request.method === "CONNECT" ? "TLS 隧道" : "明文请求"} · {request.result === "ok" ? "已走代理" : request.result || "连接中"}</span></td>
+                <td class="cell-host" title={`${request.host}:${request.port}`}><b>{compactHost(request.host, 38)}:{request.port}</b><span>{request.method === "CONNECT" ? "TLS 隧道" : "HTTP"} · {routeLabel(request)}</span></td>
                 <td><span class="source-cell"><i class:wsl={request.source === "kernel"} class:test={request.source === "self-test"}></i>{sourceLabel(request.source)}</span></td>
                 <td><span class={`protocol ${request.method === "CONNECT" ? "tunnel" : "plain"}`}>{request.method}</span></td>
                 <td><span class={`result-pill ${statusPill(request)}`}>{statusText(request)}</span></td>
@@ -207,7 +214,7 @@
     <aside class="panel request-detail">
       {#if selected}
         <div class="detail-head">
-          <div class="detail-kicker">REQUEST DETAIL</div>
+          <div class="detail-kicker">连接详情 · {routeLabel(selected)}</div>
           <h2>{compactHost(selected.host, 32)}:{selected.port}</h2>
           <p>{selected.id}</p>
         </div>
@@ -226,7 +233,7 @@
           <div class="detail-section">
             <div class="section-label">代理链路</div>
             <div class="chain-box">
-              <div class="chain-row"><i></i><span>{sourceLabel(selected.source)}</span><span class="right">{selected.source === "kernel" ? "HTTP_PROXY" : "--proxy-server"}</span></div>
+              <div class="chain-row"><i></i><span>{sourceLabel(selected.source)}</span><span class="right">{selected.process || "本机连接"}</span></div>
               <div class="chain-row"><i></i><span>Lane :{selected.source === "kernel" ? snapshot.lane.kernelPort : snapshot.lane.interfacePort}</span><span class="right">local</span></div>
               <div class="chain-row"><i></i><span>{selected.upstream || `${upstreamProtocol(snapshot.settings.protocol)} :${snapshot.settings.port}`}</span><span class="right">{formatDuration(selected.durationMs)}</span></div>
               <div class="chain-row"><i class:green={selected.result === "ok"}></i><span>{selected.host}</span><span class="right">{selected.result === "ok" ? "OK" : selected.error ? "ERROR" : selected.result}</span></div>
@@ -268,7 +275,7 @@
   .col-duration { width: 76px; }
   .request-table-wrap { overflow: auto; }
   .request-table-wrap thead { position: sticky; top: 0; z-index: 2; }
-  .request-foot { min-height: 38px; display: flex; align-items: center; gap: 6px; padding: 0 13px; border-top: 1px solid var(--line); color: var(--text-3); font-size: 11.5px; background: #fbfbfc; }
+  .request-foot { min-height: 38px; display: flex; align-items: center; gap: 6px; padding: 0 13px; border-top: 1px solid var(--line); color: var(--text-3); font-size: var(--fs-xs); background: #fbfbfc; }
   .request-foot .spacer { flex: 1; }
   .request-foot b { color: var(--text-2); }
 </style>

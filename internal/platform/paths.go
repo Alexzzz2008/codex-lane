@@ -37,7 +37,7 @@ func ResolvePaths() (Paths, error) {
 	paths := Paths{
 		ExecutableDir: exeDir,
 		ConfigPath:    filepath.Join(configBase, "launcher.json"),
-		LogDirectory:  filepath.Join(localAppData, "CodexLane", "logs"),
+		LogDirectory:  filepath.Join(configBase, "logs"),
 		UserHome:      home,
 		CodexHome:     codexHome,
 		LocalAppData:  localAppData,

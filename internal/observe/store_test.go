@@ -1,11 +1,57 @@
 package observe
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 )
+
+func TestResizePreservesRecentRecordsAndUpdates(t *testing.T) {
+	store := NewStore(200, "", nil)
+	for index := 0; index < 250; index++ {
+		store.Add(model.RequestRecord{ID: fmt.Sprint(index)})
+	}
+	store.Resize(100)
+	rows := store.List(0)
+	if len(rows) != 100 || rows[0].ID != "249" || rows[99].ID != "150" {
+		t.Fatalf("incorrect retained rows: %v", rows)
+	}
+	store.Touch(model.RequestRecord{ID: "200", Status: 204})
+	if store.List(0)[49].Status != 204 {
+		t.Fatal("resized row index was not updated")
+	}
+	store.Resize(300)
+	store.Add(model.RequestRecord{ID: "250"})
+	if rows := store.List(0); len(rows) != 101 || rows[0].ID != "250" {
+		t.Fatal("growing the store lost rows")
+	}
+}
+
+func TestActiveConnectionStatsAndTrafficAreImmediateAndNotCountedTwice(t *testing.T) {
+	store := NewStore(100, "", nil)
+	record := model.RequestRecord{ID: "live"}
+	store.Add(record)
+	record.Status, record.Result, record.LatencyMs = 200, "ok", 42
+	record.BytesUp, record.BytesDown = 10, 20
+	store.Touch(record)
+	stats := store.Stats()
+	if stats.Total != 1 || stats.Success != 1 || stats.BytesDown != 20 || stats.MedianMs != 42 {
+		t.Fatalf("active connection is missing: %+v", stats)
+	}
+	series := store.Series()
+	if series[len(series)-1].BytesDown != 20 {
+		t.Fatal("active traffic is missing from chart")
+	}
+	store.Touch(record)
+	record.BytesUp, record.BytesDown = 15, 30
+	store.Finish(record)
+	stats = store.Stats()
+	if stats.Total != 1 || stats.Success != 1 || stats.BytesUp != 15 || stats.BytesDown != 30 {
+		t.Fatalf("connection was counted twice: %+v", stats)
+	}
+}
 
 func TestStatsUseConnectLatencyForLongTunnels(t *testing.T) {
 	store := NewStore(1000, t.TempDir(), nil)

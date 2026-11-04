@@ -207,6 +207,21 @@ func Validate(cfg model.Config) error {
 	if cfg.Lane.ListenPort < 0 || cfg.Lane.ListenPort > 65535 {
 		return fmt.Errorf("lane listen port must be between 0 and 65535")
 	}
+	for _, port := range []int{cfg.Lane.InterfacePort, cfg.Lane.KernelPort} {
+		if port < 0 || port > 65535 {
+			return fmt.Errorf("本地入口端口必须在 0 至 65535 之间")
+		}
+		if port > 0 && port == cfg.Upstream.Port {
+			host := strings.Trim(cfg.Upstream.Host, "[]")
+			ip := net.ParseIP(host)
+			if strings.EqualFold(host, "localhost") || (ip != nil && ip.IsLoopback()) {
+				return fmt.Errorf("上游代理不能指向 Lane 自身的本地入口，请填写代理软件的端口")
+			}
+		}
+	}
+	if cfg.Lane.InterfacePort > 0 && cfg.Lane.InterfacePort == cfg.Lane.KernelPort {
+		return fmt.Errorf("两个本地入口不能使用同一端口")
+	}
 	switch cfg.Lane.HostFilterMode {
 	case model.HostFilterOff, model.HostFilterAllowlist:
 	default:

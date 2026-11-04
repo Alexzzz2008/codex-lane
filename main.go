@@ -8,6 +8,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,11 +25,21 @@ import (
 //go:embed all:frontend/dist
 var assets embed.FS
 
-//go:embed design/icon/appicon.png
+//go:embed build/appicon.png
 var trayIcon []byte
 
 func main() {
 	platform.EnsureSelfVisible()
+	if len(os.Args) == 4 && os.Args[1] == "--update-guard" {
+		pid, err := strconv.Atoi(os.Args[3])
+		if err == nil {
+			err = selfupdate.GuardUpdate(os.Args[2], pid, 75*time.Second)
+		}
+		if err != nil {
+			platform.AppLog("更新守护：%v", err)
+		}
+		return
+	}
 	if commandLineRequested(os.Args[1:]) {
 		platform.PrepareConsole()
 		if hasArgument(os.Args[1:], "selftest") {
@@ -44,6 +55,13 @@ func main() {
 		printCommandLineHelp()
 		return
 	}
+	executable, _ := selfupdate.Executable()
+	if selfupdate.PredecessorPID() > 0 {
+		if err := selfupdate.ArmRecovery(executable); err != nil {
+			platform.ShowNotice("Codex Lane", "无法准备更新恢复："+err.Error())
+			return
+		}
+	}
 	if err := platform.EnsureWebView2(); err != nil {
 		os.Exit(1)
 	}
@@ -51,7 +69,6 @@ func main() {
 		// The installed copy took over; the portable file is removed by it.
 		return
 	}
-	executable, _ := selfupdate.Executable()
 	predecessor := selfupdate.PredecessorPID()
 	platform.AppLog("启动 v%s exe=%s replaces=%d", appservice.Version, executable, predecessor)
 	selfupdate.ReportStarted()
@@ -60,17 +77,9 @@ func main() {
 		// The window can only appear once the previous process released the
 		// Wails instance mutex. If it never does, put the old build back so the
 		// user is not left without a working window.
-		if err := selfupdate.WaitInstanceFree(instanceMutexName, 25*time.Second); err != nil {
+		if err := selfupdate.WaitInstanceFree("wails-app-"+platform.InstanceID()+"-sim", 25*time.Second); err != nil {
 			platform.AppLog("旧实例未退出，尝试回滚：%v", err)
-			if restored, restoreErr := selfupdate.RestorePrevious(executable); restoreErr == nil {
-				platform.AppLog("已回滚到上一版本并重新启动：%s", restored)
-				_ = selfupdate.StartDetached(restored)
-				os.Exit(0)
-			} else {
-				platform.AppLog("回滚失败：%v", restoreErr)
-				platform.ShowNotice("Codex Lane", "更新后的程序未能启动，且回滚失败。\n\n请从 Releases 重新下载最新版本。")
-			}
-			os.Exit(1)
+			return
 		}
 	}
 	notifyStaleInstance()
@@ -91,7 +100,7 @@ func main() {
 			ApplicationShouldTerminateAfterLastWindowClosed: true,
 		},
 		SingleInstance: &application.SingleInstanceOptions{
-			UniqueID: "io.github.alexzzz2008.codexlane",
+			UniqueID: platform.InstanceID(),
 			OnSecondInstanceLaunch: func(application.SecondInstanceData) {
 				if window != nil {
 					window.Show()
@@ -100,6 +109,12 @@ func main() {
 			},
 		},
 	})
+	if predecessor == 0 {
+		if err := selfupdate.ArmRecovery(executable); err != nil {
+			platform.ShowNotice("Codex Lane", "无法准备更新恢复："+err.Error())
+			return
+		}
+	}
 	service.SetEmitter(func(name string, data ...any) {
 		app.Event.Emit(name, data...)
 	})
@@ -133,7 +148,7 @@ func main() {
 			window.Hide()
 		})
 	}
-	installSystemTray(app, window, service, minimizeToTray)
+	installSystemTray(app, window, service)
 
 	app.Event.OnApplicationEvent(events.Common.ApplicationStarted, func(*application.ApplicationEvent) {
 		fitWindow(app, window)
@@ -151,8 +166,6 @@ func main() {
 	platform.AppLog("应用已退出")
 	platform.ClearInstance()
 }
-
-const instanceMutexName = "wails-app-io.github.alexzzz2008.codexlane-sim"
 
 // notifyStaleInstance tells the user why a freshly downloaded build did not
 // appear: Windows allows only one Codex Lane window per session, so the running
@@ -213,7 +226,7 @@ func windowEventMapping(minimizeToTray bool) map[events.WindowEventType]events.W
 	return map[events.WindowEventType]events.WindowEventType{}
 }
 
-func installSystemTray(app *application.App, window *application.WebviewWindow, service *appservice.AppService, minimizeToTray bool) {
+func installSystemTray(app *application.App, window *application.WebviewWindow, service *appservice.AppService) {
 	tray := app.SystemTray.New()
 	tray.SetIcon(trayIcon)
 	tray.SetTooltip("Codex Lane")
@@ -224,18 +237,18 @@ func installSystemTray(app *application.App, window *application.WebviewWindow, 
 	})
 	menu.Add("打开 Codex").OnClick(func(*application.Context) {
 		go func() {
-			_, _ = service.LaunchCodex(model.LaunchOptions{})
+			result, err := service.LaunchCodex(model.LaunchOptions{})
+			if err != nil || result.NeedsRestart || result.NeedsInstall {
+				window.Show()
+				window.Focus()
+			}
 		}()
 	})
 	menu.Add("停止通道").OnClick(func(*application.Context) {
 		go service.StopLane()
 	})
-	if minimizeToTray {
-		menu.AddSeparator()
-		menu.Add("退出 Codex Lane").OnClick(func(*application.Context) {
-			app.Quit()
-		})
-	}
+	menu.AddSeparator()
+	menu.Add("退出 Codex Lane").OnClick(func(*application.Context) { app.Quit() })
 	tray.SetMenu(menu)
 	tray.Show()
 }

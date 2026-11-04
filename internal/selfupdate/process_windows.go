@@ -79,8 +79,10 @@ func WaitInstanceFree(name string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for {
 		handle, err := windows.CreateMutex(nil, false, pointer)
-		if err == nil {
+		if handle != 0 {
 			windows.CloseHandle(handle)
+		}
+		if err == nil {
 			return nil
 		}
 		if time.Now().After(deadline) {

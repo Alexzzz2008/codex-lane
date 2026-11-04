@@ -124,7 +124,7 @@
         {#if busy === "tests"}
           {hasReport ? "下方为上次结果，完成后自动替换。" : "正在访问代理与 OpenAI 域名，请稍候。"}
         {:else if !hasReport}
-          运行一次即可得到代理、OpenAI 域名、登录与隔离结论。
+          检查代理、OpenAI 域名和本机配置，不会发起模型会话。
         {:else}
           {passCount} 通过 · {warnCount} 警告 · {failCount} 失败 · {skipCount} 跳过
         {/if}
@@ -136,7 +136,7 @@
   <div class:stale={busy === "tests" && hasReport} class="check-body">
   <article class="panel domain-card">
     <div class="panel-head">
-      <div><h2 class="panel-title">OpenAI 域名连通</h2><p class="panel-sub">经 Lane 与上游代理真实访问；任一失败说明 Clash 规则或节点有问题。</p></div>
+      <div><h2 class="panel-title">OpenAI 域名连通</h2><p class="panel-sub">经当前 Lane 真实访问。失败时检查节点、分流规则或目标服务状态。</p></div>
       <div class="right"><span class={`result-pill ${domainOK === domains.length && hasReport ? "pass" : hasReport ? "warn" : "pending"}`}>{domainOK} / {domains.length}</span></div>
     </div>
     <div class="domain-rows">
@@ -207,22 +207,22 @@
   }
   .check-banner.ok { border-color: #d7ecdf; background: linear-gradient(90deg, #f6fdf8, #fbfefc); }
   .check-banner.warn { border-color: var(--orange-line); background: linear-gradient(90deg, #fff8eb, #fffdf9); }
-  .check-score { flex: none; color: var(--text); font-size: 26px; font-weight: 680; letter-spacing: -.02em; }
-  .check-score small { margin-left: 2px; color: var(--text-3); font-size: 11.5px; font-weight: 600; }
+  .check-score { flex: none; color: var(--text); font-size: 26px; font-weight: 500; letter-spacing: -.02em; }
+  .check-score small { margin-left: 2px; color: var(--text-3); font-size: var(--fs-xs); font-weight: 600; }
   .check-copy { min-width: 0; flex: 1; }
-  .check-copy b { display: block; font-size: 13px; font-weight: 640; }
-  .check-copy span { display: block; margin-top: 2px; color: var(--text-3); font-size: 11.5px; }
-  .check-time { flex: none; color: var(--text-3); font: 11px var(--mono); }
+  .check-copy b { display: block; font-size: 13px; font-weight: 500; }
+  .check-copy span { display: block; margin-top: 2px; color: var(--text-3); font-size: var(--fs-xs); }
+  .check-time { flex: none; color: var(--text-3); font: var(--fs-xs) var(--mono); }
   .domain-card { margin-bottom: 12px; }
   .domain-rows { border-top: 1px solid var(--line); }
-  .domain-row { min-height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid #f2f2f6; font-size: 11.5px; }
+  .domain-row { min-height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 18px; border-bottom: 1px solid #f2f2f6; font-size: var(--fs-xs); }
   .domain-row i { width: 6px; height: 6px; flex: none; border-radius: 50%; background: #cbcbd6; }
   .domain-row i.ok { background: var(--green); }
   .domain-row i.bad { background: var(--red); }
-  .domain-row code { width: 172px; flex: none; font: 11px var(--mono); color: var(--text); }
+  .domain-row code { width: 172px; flex: none; font: var(--fs-xs) var(--mono); color: var(--text); }
   .domain-row span { min-width: 0; flex: 1; overflow: hidden; color: var(--text-3); white-space: nowrap; text-overflow: ellipsis; }
-  .domain-row b { flex: none; color: var(--text-2); font: 11px var(--mono); font-weight: 500; }
-  .domain-row em { flex: none; min-height: 22px; display: inline-flex; align-items: center; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: 11px; font-style: normal; font-weight: 630; background: #f1f1f4; color: var(--text-3); }
+  .domain-row b { flex: none; color: var(--text-2); font: var(--fs-xs) var(--mono); font-weight: 500; }
+  .domain-row em { flex: none; min-height: 22px; display: inline-flex; align-items: center; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); font-size: var(--fs-xs); font-style: normal; font-weight: 500; background: #f1f1f4; color: var(--text-3); }
   .domain-row em.pass { border-color: var(--green-line); background: var(--green-soft); color: var(--green); }
   .domain-row em.fail { border-color: #f1cccc; background: #fdeceb; color: var(--red); }
   .domain-row em.warn { border-color: var(--orange-line); background: var(--orange-soft); color: var(--orange); }
@@ -238,9 +238,9 @@
   }
   .check-group summary::-webkit-details-marker { display: none; }
   .check-group summary:hover { background: #fbfbfc; }
-  .group-code { width: 18px; flex: none; color: var(--accent); font: 11px var(--mono); font-weight: 700; }
+  .group-code { width: 18px; flex: none; color: var(--accent); font: var(--fs-xs) var(--mono); font-weight: 600; }
   .check-group summary b { flex: 1; font-size: 13px; font-weight: 610; }
-  .group-meta { color: var(--text-3); font-size: 11.5px; }
+  .group-meta { color: var(--text-3); font-size: var(--fs-xs); }
   .check-group[open] summary { border-bottom: 1px solid #f2f2f6; }
   .group-body { background: #fcfcfd; }
   .group-body .test-row { padding-left: 46px; }

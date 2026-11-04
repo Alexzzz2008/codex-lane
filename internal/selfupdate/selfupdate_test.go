@@ -117,11 +117,17 @@ func TestInstallAndRollback(t *testing.T) {
 	if string(got) != "new version" {
 		t.Fatalf("installed %q", got)
 	}
+	if _, err := os.Stat(executable + ".update.json"); err != nil {
+		t.Fatalf("missing recovery record: %v", err)
+	}
 	if err := Rollback(executable, old); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = os.ReadFile(executable)
 	if string(got) != "old version" {
 		t.Fatalf("rolled back to %q", got)
+	}
+	if _, err := os.Stat(executable + ".update.json"); !os.IsNotExist(err) {
+		t.Fatalf("recovery record was not cleared: %v", err)
 	}
 }

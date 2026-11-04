@@ -77,6 +77,15 @@
   function clearReadout() {
     hoverIndex = null;
   }
+
+  function keyReadout(event: KeyboardEvent) {
+    if (!values.length || !["ArrowLeft", "ArrowRight", "Home", "End", "Escape"].includes(event.key)) return;
+    event.preventDefault();
+    if (event.key === "Escape") hoverIndex = null;
+    else if (event.key === "Home") hoverIndex = 0;
+    else if (event.key === "End") hoverIndex = values.length - 1;
+    else hoverIndex = Math.max(0, Math.min(values.length - 1, (hoverIndex ?? values.length - 1) + (event.key === "ArrowLeft" ? -1 : 1)));
+  }
 </script>
 
 <div class="chart-wrap">
@@ -85,7 +94,7 @@
     <span><i class="green"></i>连接延迟</span>
     <span class="hint">悬停查看读数</span>
   </div>
-  <div class="chart-stage" role="group" aria-label="流量与延迟图表，移动指针查看精确读数" bind:this={stage} onpointermove={moveReadout} onpointerleave={clearReadout}>
+  <div class="chart-stage" role="slider" tabindex="0" aria-label="流量与延迟图表，移动指针或按左右方向键查看读数" aria-valuemin={0} aria-valuemax={Math.max(0, values.length - 1)} aria-valuenow={hoverIndex ?? Math.max(0, values.length - 1)} aria-valuetext={hovered ? `${hovered.time}，下行 ${formatBytes(hovered.bytesDown || 0)}，延迟 ${hovered.latencyMs || 0} 毫秒` : "使用方向键查看读数"} bind:this={stage} onpointermove={moveReadout} onpointerleave={clearReadout} onkeydown={keyReadout} onblur={clearReadout}>
     <svg class="chart-svg" viewBox="0 0 760 205" preserveAspectRatio="none" role="img" aria-label="最近请求吞吐和延迟趋势">
       <defs>
         <linearGradient id="areaFill" x1="0" x2="0" y1="0" y2="1">
@@ -159,7 +168,7 @@
     gap: 14px;
     padding: 0 3px 7px;
     color: var(--text-3);
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
   }
   .legend span { display: inline-flex; align-items: center; gap: 6px; }
   .legend .hint { margin-left: auto; color: var(--text-4); }
@@ -184,7 +193,7 @@
     position: absolute;
     pointer-events: none;
     color: var(--text-3);
-    font: 11px var(--sans);
+    font: var(--fs-xs) var(--sans);
     font-variant-numeric: tabular-nums;
   }
   .axis-y { inset: 0; }
@@ -208,7 +217,7 @@
     left: 6.3%;
     display: flex;
     justify-content: space-between;
-    font-size: 11px;
+    font-size: var(--fs-xs);
   }
   .chart-tip {
     min-width: 122px;
@@ -223,14 +232,14 @@
     background: rgba(32, 33, 36, .96);
     box-shadow: 0 7px 20px rgba(24, 24, 35, .18);
     color: #f7f7fa;
-    font-size: 11.5px;
+    font-size: var(--fs-xs);
     pointer-events: none;
     transform: translateX(-50%);
     white-space: nowrap;
   }
   .chart-tip b {
     color: #c9c4ff;
-    font-size: 11px;
+    font-size: var(--fs-xs);
     font-weight: 650;
     letter-spacing: .02em;
   }

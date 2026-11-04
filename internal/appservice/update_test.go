@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/config"
+	"github.com/Alexzzz2008/codex-lane/internal/model"
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
@@ -135,5 +137,49 @@ func TestCheckForUpdatesDownloadsAndVerifies(t *testing.T) {
 	}
 	if got, err := os.ReadFile(file); err != nil || string(got) != string(body) {
 		t.Fatalf("staged update = %q, err = %v", got, err)
+	}
+	restarted := New()
+	restarted.paths = service.paths
+	restarted.restoreUpdateCache()
+	if restarted.currentUpdateStatus().Status != "ready" || restarted.stagedUpdate != file {
+		t.Fatal("verified update was not restored after restart")
+	}
+	if err := os.WriteFile(file, []byte("corrupt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if service.updateReadyFor("99.0.0") {
+		t.Fatal("accepted corrupt cached update")
+	}
+}
+
+func TestOfflineUpdateCheckPreservesDownloadedVersion(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	defer server.Close()
+	t.Setenv("CODEXLANE_UPDATE_FEED", server.URL)
+	service := New()
+	service.cfg = config.Default()
+	service.cfg.Upstream.Host = ""
+	service.stagedVersion = "99.0.0"
+	service.stagedUpdate = filepath.Join(t.TempDir(), "update.exe")
+	if err := os.WriteFile(service.stagedUpdate, []byte("verified update"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("verified update"))
+	service.updateManifest = selfupdate.Manifest{Version: "99.0.0", Assets: map[string]selfupdate.Asset{updateAssetKey: {URL: server.URL, Size: int64(len("verified update")), SHA256: hex.EncodeToString(sum[:])}}}
+	service.updateStatus = model.UpdateStatus{Status: "ready", Available: true, LatestVersion: "99.0.0"}
+	status := service.CheckForUpdates()
+	if status.Status != "ready" || !status.Available || status.LatestVersion != "99.0.0" || status.Error == "" {
+		t.Fatalf("downloaded update was lost: %+v", status)
+	}
+}
+
+func TestUpdateVersionsAreSafeAndOrdered(t *testing.T) {
+	for _, value := range []string{"1.2.3-../../escape", "-1.2.3", "1.2.3/escape", "1.2.3-beta..1", "1.2"} {
+		if isVersion(value) {
+			t.Fatalf("accepted unsafe version %q", value)
+		}
+	}
+	if !isVersion("1.2.3-beta.10+build.7") || compareVersions("1.2.3-beta.10", "1.2.3-beta.2") <= 0 || compareVersions("1.2.3-beta", "1.2.3") >= 0 {
+		t.Fatal("incorrect prerelease version handling")
 	}
 }
