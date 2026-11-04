@@ -591,7 +591,7 @@
       </article>
 
       <article class="panel settings-card">
-        <div class="panel-head"><div><h2 class="panel-title">上游档案</h2><p class="panel-sub">保存多套代理地址，一键启用或自动选最快；启用会立即重启 Lane。</p></div></div>
+        <div class="panel-head"><div><h2 class="panel-title">上游档案</h2><p class="panel-sub">保存多套代理地址，一键切换；新连接立即生效，已有连接保持原链路。</p></div></div>
         <div class="entry-list">
           <div class="entry-head grid-profiles"><span>档案名称</span><span>协议</span><span>地址</span><span>端口</span><span>操作</span></div>
           {#each profiles as profile, index (index)}

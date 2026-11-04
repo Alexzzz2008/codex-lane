@@ -21,6 +21,7 @@
     onNavigate,
     onDiagnostics,
     onRunTests,
+    onSwitchUpstream,
   }: {
     snapshot: Snapshot;
     busy?: string;
@@ -29,6 +30,7 @@
     onNavigate: (page: string) => void;
     onDiagnostics: () => void;
     onRunTests: () => void;
+    onSwitchUpstream: (name: string) => Promise<void>;
   } = $props();
 
   const lane = $derived(snapshot.lane);
@@ -114,6 +116,14 @@
       <p class="page-sub">只看 Codex 的独立通道；Windows 系统代理与 TUN 始终保持原样。</p>
     </div>
     <div class="page-actions">
+      {#if snapshot.settings.upstreams?.length}
+        <select class="native-select" aria-label="切换代理档案" value={snapshot.settings.activeUpstream} disabled={Boolean(busy)} onchange={(event) => void onSwitchUpstream(event.currentTarget.value)}>
+          <option value="" disabled>选择代理档案</option>
+          {#each snapshot.settings.upstreams as profile}
+            <option value={profile.name}>{profile.name}</option>
+          {/each}
+        </select>
+      {/if}
       <button class="btn" onclick={onDiagnostics} disabled={busy === "diagnostics" || busy === "tests"}>
         {#if busy === "diagnostics" || busy === "tests"}
           <span class="spin"><Icon name="refresh" size={15} /></span>
@@ -128,7 +138,7 @@
         {:else}
           <Icon name="play" size={15} />
         {/if}
-        {codexConnected ? "重新打开 Codex" : codex.running ? "接入 Codex" : "打开 Codex"}
+        {codexConnected ? "检查接入" : codex.running ? "接入 Codex" : "打开 Codex"}
       </button>
     </div>
   </div>

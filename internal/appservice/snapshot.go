@@ -35,7 +35,6 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	cachedEnvironment := s.cachedEnvironment
 	cachedUpstream := s.cachedUpstream
 	updateStatus := s.updateStatus
-	lastProbe := s.lastProbe
 	events := append([]model.Event(nil), s.events...)
 	testReport := s.testReport
 	diagnostic := s.diagnostic
@@ -95,7 +94,7 @@ func (s *AppService) snapshotWith(ctx context.Context, deep bool, allowProbe boo
 	}
 
 	upstream := cachedUpstream
-	if allowProbe && (deep || (!lastProbe.IsZero() && time.Since(lastProbe) > 30*time.Second)) {
+	if allowProbe && deep {
 		probeCtx, cancel := context.WithTimeout(ctx, 6*time.Second)
 		upstream = s.probeUpstream(probeCtx, cfg)
 		cancel()
@@ -254,7 +253,6 @@ func (s *AppService) cacheProbe(status model.UpstreamStatus) {
 		return
 	}
 	s.cachedUpstream = status
-	s.lastProbe = time.Now()
 }
 
 func (s *AppService) updateDeepCache(environment model.Environment, codexStatus model.CodexStatus, engine model.ResolvedEngine, wsl model.WSLStatus) {

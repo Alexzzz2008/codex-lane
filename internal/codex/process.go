@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/model"
@@ -61,12 +62,7 @@ func Launch(pkg PackageInfo, engine string, interfaceProxy string, kernelProxy s
 	}
 	cmd := exec.Command(pkg.ExecutablePath, args...)
 	cmd.Dir = home
-	cmd.Env = mergeEnvironment(os.Environ(), map[string]string{
-		"HTTP_PROXY":  kernelProxy,
-		"HTTPS_PROXY": kernelProxy,
-		"ALL_PROXY":   kernelProxy,
-		"NO_PROXY":    noProxy,
-	})
+	cmd.Env = proxyEnvironment(os.Environ(), engine, kernelProxy, noProxy)
 	platform.ConfigureDetached(cmd)
 	if err := cmd.Start(); err != nil {
 		return model.LaunchResult{}, fmt.Errorf("start Codex: %w", err)
@@ -84,10 +80,42 @@ func Launch(pkg PackageInfo, engine string, interfaceProxy string, kernelProxy s
 	}, nil
 }
 
+func proxyEnvironment(base []string, engine, kernelProxy, noProxy string) []string {
+	replacements := map[string]string{
+		"HTTP_PROXY":  kernelProxy,
+		"HTTPS_PROXY": kernelProxy,
+		"ALL_PROXY":   kernelProxy,
+		"NO_PROXY":    noProxy,
+	}
+	if engine == model.EngineWSL {
+		var entries []string
+		for _, item := range base {
+			name, value, _ := strings.Cut(item, "=")
+			if !strings.EqualFold(name, "WSLENV") {
+				continue
+			}
+			for _, entry := range strings.Split(value, ":") {
+				variable, _, _ := strings.Cut(entry, "/")
+				if _, replaced := replacements[toUpperASCII(variable)]; !replaced && entry != "" {
+					entries = append(entries, entry)
+				}
+			}
+		}
+		for _, name := range []string{"HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"} {
+			lower := strings.ToLower(name)
+			entries = append(entries, lower+"/u")
+			replacements[lower] = replacements[name]
+			delete(replacements, name)
+		}
+		replacements["WSLENV"] = strings.Join(entries, ":")
+	}
+	return mergeEnvironment(base, replacements)
+}
+
 func mergeEnvironment(base []string, replacements map[string]string) []string {
 	keys := make(map[string]struct{}, len(replacements))
 	for key := range replacements {
-		keys[key] = struct{}{}
+		keys[toUpperASCII(key)] = struct{}{}
 	}
 	out := make([]string, 0, len(base)+len(replacements))
 	for _, item := range base {

@@ -25,12 +25,7 @@ import (
 type RecordEvent func(event string, record model.RequestRecord)
 
 type Server struct {
-	upstream       model.Upstream
-	dialer         *UpstreamDialer
-	routes         []model.RouteRule
-	allowedHosts   []string
-	hostFilter     string
-	direct         *net.Dialer
+	routing        atomic.Pointer[routingConfig]
 	resolveProcess func(localPort int) string
 	interfaceL     net.Listener
 	kernelL        net.Listener
@@ -42,6 +37,15 @@ type Server struct {
 	startedAt      time.Time
 	closeOnce      sync.Once
 	cancel         context.CancelFunc
+}
+
+type routingConfig struct {
+	upstream     model.Upstream
+	dialer       *UpstreamDialer
+	routes       []model.RouteRule
+	allowedHosts []string
+	hostFilter   string
+	direct       net.Dialer
 }
 
 type Options struct {
@@ -57,7 +61,6 @@ type Options struct {
 }
 
 func Start(ctx context.Context, opts Options) (*Server, error) {
-	dialer := NewUpstreamDialer(opts.Upstream)
 	interfaceL, err := listen(opts.Host, opts.PreferredPort)
 	if err != nil {
 		return nil, fmt.Errorf("start Lane interface listener: %w", err)
@@ -69,13 +72,7 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	s := &Server{
-		upstream:       opts.Upstream,
-		dialer:         dialer,
-		routes:         opts.Routes,
-		allowedHosts:   opts.AllowedHosts,
-		hostFilter:     opts.HostFilterMode,
 		resolveProcess: opts.ResolveProcess,
-		direct:         &net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second},
 		interfaceL:     interfaceL,
 		kernelL:        kernelL,
 		interfaceP:     portOf(interfaceL.Addr()),
@@ -84,6 +81,7 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 		startedAt:      time.Now(),
 		cancel:         cancel,
 	}
+	s.UpdateRouting(opts.Upstream, opts.Routes, opts.AllowedHosts, opts.HostFilterMode)
 	s.interfaceS = &http.Server{
 		Handler:           s.handler(model.SourceInterface),
 		ReadHeaderTimeout: 15 * time.Second,
@@ -114,6 +112,17 @@ func Start(ctx context.Context, opts Options) (*Server, error) {
 func (s *Server) InterfacePort() int   { return s.interfaceP }
 func (s *Server) KernelPort() int      { return s.kernelP }
 func (s *Server) StartedAt() time.Time { return s.startedAt }
+
+func (s *Server) UpdateRouting(upstream model.Upstream, routes []model.RouteRule, allowedHosts []string, hostFilter string) {
+	s.routing.Store(&routingConfig{
+		upstream:     upstream,
+		dialer:       NewUpstreamDialer(upstream),
+		routes:       append([]model.RouteRule(nil), routes...),
+		allowedHosts: append([]string(nil), allowedHosts...),
+		hostFilter:   hostFilter,
+		direct:       net.Dialer{Timeout: 20 * time.Second, KeepAlive: 30 * time.Second},
+	})
+}
 
 func (s *Server) InterfaceURL() string {
 	return "http://127.0.0.1:" + fmt.Sprint(s.interfaceP)
@@ -162,8 +171,8 @@ func matchPattern(pattern string, host string) bool {
 	return pattern == host
 }
 
-func (s *Server) routeAction(host string) string {
-	for _, rule := range s.routes {
+func (routing *routingConfig) routeAction(host string) string {
+	for _, rule := range routing.routes {
 		if matchPattern(rule.Pattern, host) {
 			return rule.Action
 		}
@@ -171,11 +180,11 @@ func (s *Server) routeAction(host string) string {
 	return model.RouteProxy
 }
 
-func (s *Server) hostAllowed(host string) bool {
-	if s.hostFilter != model.HostFilterAllowlist {
+func (routing *routingConfig) hostAllowed(host string) bool {
+	if routing.hostFilter != model.HostFilterAllowlist {
 		return true
 	}
-	for _, pattern := range s.allowedHosts {
+	for _, pattern := range routing.allowedHosts {
 		if matchPattern(pattern, host) {
 			return true
 		}
@@ -183,28 +192,29 @@ func (s *Server) hostAllowed(host string) bool {
 	return false
 }
 
-func (s *Server) dialTarget(ctx context.Context, host string, target string) (net.Conn, string, error) {
-	if s.routeAction(host) == model.RouteDirect {
-		conn, err := s.direct.DialContext(ctx, "tcp", target)
+func (routing *routingConfig) dialTarget(ctx context.Context, host string, target string) (net.Conn, string, error) {
+	if routing.routeAction(host) == model.RouteDirect {
+		conn, err := routing.direct.DialContext(ctx, "tcp", target)
 		return conn, "DIRECT", err
 	}
-	conn, err := s.dialer.Dial(ctx, target)
-	return conn, upstreamLabel(s.upstream), err
+	conn, err := routing.dialer.Dial(ctx, target)
+	return conn, upstreamLabel(routing.upstream), err
 }
 
 func (s *Server) handleStatusPage(w http.ResponseWriter, r *http.Request) {
+	upstream := upstreamLabel(s.routing.Load().upstream)
 	if r.URL.Path == "/healthz" {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-store")
 		_, _ = io.WriteString(w, fmt.Sprintf(
 			`{"ok":true,"interfacePort":%d,"kernelPort":%d,"upstream":%q,"startedAt":%q}`,
-			s.interfaceP, s.kernelP, upstreamLabel(s.upstream), s.startedAt.Format(time.RFC3339),
+			s.interfaceP, s.kernelP, upstream, s.startedAt.Format(time.RFC3339),
 		))
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
-	_, _ = io.WriteString(w, statusPageHTML(s.interfaceP, s.kernelP, upstreamLabel(s.upstream)))
+	_, _ = io.WriteString(w, statusPageHTML(s.interfaceP, s.kernelP, upstream))
 }
 
 func statusPageHTML(interfacePort int, kernelPort int, upstream string) string {
@@ -246,6 +256,7 @@ small { color: #8a8e99; }
 }
 
 func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Request) {
+	routing := s.routing.Load()
 	host, target, port, err := ParseTarget(r.Host, 443)
 	started := time.Now()
 	id := newRequestID()
@@ -257,7 +268,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		Host:      host,
 		Port:      port,
 		Scheme:    "https",
-		Upstream:  upstreamLabel(s.upstream),
+		Upstream:  upstreamLabel(routing.upstream),
 		StartedAt: started.Format(time.RFC3339Nano),
 	}
 	if err != nil {
@@ -270,7 +281,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 		http.Error(w, "Codex Lane: invalid CONNECT target", http.StatusBadRequest)
 		return
 	}
-	if !s.hostAllowed(host) {
+	if !routing.hostAllowed(host) {
 		record.Status = http.StatusForbidden
 		record.Result = "blocked"
 		record.Error = "host is not in the Lane allowlist"
@@ -288,7 +299,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 	s.emit("request:new", record)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	upstreamConn, dialLabel, err := s.dialTarget(ctx, host, target)
+	upstreamConn, dialLabel, err := routing.dialTarget(ctx, host, target)
 	record.Upstream = dialLabel
 	if err != nil {
 		record.Status = http.StatusBadGateway
@@ -360,6 +371,7 @@ func (s *Server) handleConnect(source string, w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Request) {
+	routing := s.routing.Load()
 	started := time.Now()
 	host := r.URL.Hostname()
 	port := 80
@@ -370,8 +382,8 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 	} else if r.URL.Scheme == "https" {
 		port = 443
 	}
-	action := s.routeAction(host)
-	dialLabel := upstreamLabel(s.upstream)
+	action := routing.routeAction(host)
+	dialLabel := upstreamLabel(routing.upstream)
 	if action == model.RouteDirect {
 		dialLabel = "DIRECT"
 	}
@@ -386,7 +398,7 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 		Upstream:  dialLabel,
 		StartedAt: started.Format(time.RFC3339Nano),
 	}
-	if !s.hostAllowed(host) {
+	if !routing.hostAllowed(host) {
 		record.Status = http.StatusForbidden
 		record.Result = "blocked"
 		record.Error = "host is not in the Lane allowlist"
@@ -403,7 +415,7 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 	var bytesUp, bytesDown atomic.Int64
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
-			conn, _, err := s.dialTarget(ctx, host, address)
+			conn, _, err := routing.dialTarget(ctx, host, address)
 			if err != nil {
 				return nil, err
 			}

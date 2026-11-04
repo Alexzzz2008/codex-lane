@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,11 +24,12 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.39"
+const Version = "0.1.40"
 
 type Emitter func(name string, data ...any)
 
 type AppService struct {
+	operationMu           sync.Mutex
 	mu                    sync.RWMutex
 	ctx                   context.Context
 	paths                 platform.Paths
@@ -54,7 +53,6 @@ type AppService struct {
 	cachedUpstream        model.UpstreamStatus
 	updateStatus          model.UpdateStatus
 	updateManifest        selfupdate.Manifest
-	lastProbe             time.Time
 	testRunning           atomic.Bool
 	updateCheckRunning    atomic.Bool
 	updateDownloadRunning atomic.Bool
@@ -181,6 +179,8 @@ func (s *AppService) Refresh() (model.Snapshot, error) {
 }
 
 func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, error) {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	s.mu.Lock()
 	cfg := s.cfg
 	cfgPath := s.paths.ConfigPath
@@ -202,7 +202,7 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	}
 	if cfg.Engine != model.EngineAuto {
 		targetWSL := cfg.Engine == model.EngineWSL
-		if engine.KeyPresent && engine.KeyValue != targetWSL {
+		if !engine.KeyPresent || engine.KeyValue != targetWSL {
 			if _, err := codex.SetEngine(codexConfig, targetWSL); err != nil {
 				return model.Snapshot{}, fmt.Errorf("switch Codex engine: %w", err)
 			}
@@ -215,6 +215,7 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	}
 	s.mu.Lock()
 	s.cfg = cfg
+	s.initError = ""
 	s.mu.Unlock()
 	if input.LaunchAtLogin != previousAutoStart {
 		if err := platform.SetAutoStart(input.LaunchAtLogin); err != nil {
@@ -225,7 +226,6 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	if oldUpstream != newUpstream {
 		s.mu.Lock()
 		s.cachedUpstream = model.UpstreamStatus{URL: newUpstream}
-		s.lastProbe = time.Time{}
 		s.testReport = nil
 		s.mu.Unlock()
 	}
@@ -233,11 +233,8 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 		!sameStrings(previousAllowed, cfg.Lane.AllowedHosts) ||
 		previousFilter != cfg.Lane.HostFilterMode
 	if oldUpstream != newUpstream || laneRulesChanged {
-		if err := s.restartLane(); err != nil {
-			s.addEvent("error", "网关重启失败", err.Error())
-		} else {
-			s.addEvent("ok", "上游代理已更新", newUpstream)
-		}
+		s.applyLaneRouting(cfg)
+		s.addEvent("ok", "代理配置已应用", "新连接使用当前代理，已有连接保持原链路")
 	}
 	s.addEvent("info", "设置已保存", config.UpstreamURL(cfg.Upstream))
 	refreshCtx, refreshCancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -271,6 +268,8 @@ func sameStrings(a, b []string) bool {
 }
 
 func (s *AppService) StartLane() error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	s.mu.Lock()
 	if s.lane != nil {
 		s.mu.Unlock()
@@ -292,15 +291,6 @@ func (s *AppService) startLane(cfg model.Config) error {
 		return nil
 	}
 	s.mu.Unlock()
-	if cfg.RequireHealthyProxy {
-		address := net.JoinHostPort(cfg.Upstream.Host, strconv.Itoa(cfg.Upstream.Port))
-		checkCtx, checkCancel := context.WithTimeout(context.Background(), 4*time.Second)
-		_, probeErr := gateway.CheckTCPService(checkCtx, address)
-		checkCancel()
-		if probeErr != nil {
-			return fmt.Errorf("上游代理不可达（%s）：%w", address, probeErr)
-		}
-	}
 	ctx, cancel := context.WithCancel(s.ctx)
 	lane, err := gateway.Start(ctx, gateway.Options{
 		Upstream:            cfg.Upstream,
@@ -346,6 +336,8 @@ func (s *AppService) persistLanePorts(lane *gateway.Server) {
 }
 
 func (s *AppService) StopLane() {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	s.mu.Lock()
 	lane := s.lane
 	cancel := s.laneCancel
@@ -364,18 +356,19 @@ func (s *AppService) StopLane() {
 	}
 }
 
-func (s *AppService) restartLane() error {
-	s.StopLane()
-	s.mu.RLock()
-	cfg := s.cfg
-	s.mu.RUnlock()
-	return s.startLane(cfg)
+func (s *AppService) applyLaneRouting(cfg model.Config) {
+	if lane := s.currentLane(); lane != nil {
+		lane.UpdateRouting(cfg.Upstream, cfg.Lane.Routes, cfg.Lane.AllowedHosts, cfg.Lane.HostFilterMode)
+		go func() { _ = s.checkUpstreamHealth(s.ctx, cfg) }()
+	}
 }
 
 func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResult, error) {
 	if err := s.StartLane(); err != nil {
 		return model.LaunchResult{}, err
 	}
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	cfg := s.currentConfig()
@@ -422,10 +415,6 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 				Message:      "Codex 正在运行，当前代理入口为 " + proxyLabel(status.ProxyURL),
 			}, nil
 		}
-		if err := codex.KillMainProcess(ctx, pkg.InstallLocation, status.MainPID); err != nil {
-			return model.LaunchResult{}, err
-		}
-		s.addEvent("info", "Codex 已停止", "等待重新注入代理参数")
 	}
 	if cfg.RequireHealthyProxy {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
@@ -434,6 +423,12 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 		if probeErr != nil {
 			return model.LaunchResult{}, fmt.Errorf("上游代理无法出网，请先切换 Clash 节点后重试：%w", probeErr)
 		}
+	}
+	if status.Running {
+		if err := codex.KillMainProcess(ctx, pkg.InstallLocation, status.MainPID); err != nil {
+			return model.LaunchResult{}, err
+		}
+		s.addEvent("info", "Codex 已停止", "代理预检已通过，准备重新接入")
 	}
 	result, err := codex.Launch(pkg, engine.Resolved, lane.InterfaceURL(), lane.KernelURL(), cfg.Upstream.NoProxy, paths.UserHome)
 	if err != nil {

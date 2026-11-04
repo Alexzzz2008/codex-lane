@@ -29,6 +29,7 @@ func (s *AppService) startMonitor() {
 		defer retentionTick.Stop()
 		upstreamFails := 0
 		upstreamAlerted := false
+		monitoredUpstream := ""
 		driftCount := 0
 		driftAlerted := false
 		for {
@@ -43,9 +44,16 @@ func (s *AppService) startMonitor() {
 					continue
 				}
 				cfg := s.currentConfig()
-				probeCtx, cancel := context.WithTimeout(s.ctx, 10*time.Second)
-				_, err := gateway.CheckUpstreamTunnel(probeCtx, cfg.Upstream, "auth.openai.com:443")
-				cancel()
+				upstreamURL := config.UpstreamURL(cfg.Upstream)
+				if upstreamURL != monitoredUpstream {
+					monitoredUpstream = upstreamURL
+					upstreamFails = 0
+					upstreamAlerted = false
+				}
+				err := s.checkUpstreamHealth(s.ctx, cfg)
+				if s.currentLane() == nil || config.UpstreamURL(s.currentConfig().Upstream) != upstreamURL {
+					continue
+				}
 				if err == nil {
 					upstreamFails = 0
 					upstreamAlerted = false
@@ -70,6 +78,23 @@ func (s *AppService) startMonitor() {
 			}
 		}
 	}()
+}
+
+func (s *AppService) checkUpstreamHealth(ctx context.Context, cfg model.Config) error {
+	ctx, cancel := context.WithTimeout(ctx, 6*time.Second)
+	defer cancel()
+	latency, err := gateway.CheckUpstreamTunnel(ctx, cfg.Upstream, "auth.openai.com:443")
+	status := model.UpstreamStatus{
+		URL:       config.UpstreamURL(cfg.Upstream),
+		CheckedAt: time.Now().Format(time.RFC3339),
+		Reachable: err == nil,
+		LatencyMs: latency.Milliseconds(),
+	}
+	if err != nil {
+		status.Error = err.Error()
+	}
+	s.cacheProbe(status)
+	return err
 }
 
 func (s *AppService) cleanRetention() {
@@ -114,13 +139,13 @@ func (s *AppService) failoverUpstream() bool {
 			continue
 		}
 		candidate := model.Upstream{Protocol: profile.Protocol, Host: profile.Host, Port: profile.Port, NoProxy: cfg.Upstream.NoProxy}
-		probeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		probeCtx, cancel := context.WithTimeout(s.ctx, 5*time.Second)
 		_, err := gateway.CheckUpstreamTunnel(probeCtx, candidate, "auth.openai.com:443")
 		cancel()
 		if err != nil {
 			continue
 		}
-		if err := s.switchToProfile(profile, candidate); err != nil {
+		if err := s.switchToProfile(profile); err != nil {
 			continue
 		}
 		s.addEvent("ok", "已自动切换上游代理", config.UpstreamURL(candidate))
@@ -129,29 +154,39 @@ func (s *AppService) failoverUpstream() bool {
 	return false
 }
 
-func (s *AppService) switchToProfile(profile model.UpstreamProfile, candidate model.Upstream) error {
+func (s *AppService) switchToProfile(profile model.UpstreamProfile) error {
+	s.operationMu.Lock()
+	defer s.operationMu.Unlock()
 	s.mu.Lock()
 	if s.paths.ConfigPath == "" {
 		s.mu.Unlock()
 		return fmt.Errorf("app service is not ready")
 	}
 	cfg := s.cfg
-	previous := s.cfg
 	path := s.paths.ConfigPath
-	cfg.ActiveUpstream = profile.Name
-	cfg.Upstream.Protocol = candidate.Protocol
-	cfg.Upstream.Host = candidate.Host
-	cfg.Upstream.Port = candidate.Port
-	s.cfg = cfg
-	s.lastProbe = time.Time{}
-	s.cachedUpstream = model.UpstreamStatus{URL: config.UpstreamURL(candidate)}
-	s.testReport = nil
 	s.mu.Unlock()
+	found := false
+	for _, current := range cfg.Upstreams {
+		if current == profile {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return fmt.Errorf("代理档案已变更，请重新选择")
+	}
+	cfg.ActiveUpstream = profile.Name
+	cfg.Upstream.Protocol = profile.Protocol
+	cfg.Upstream.Host = profile.Host
+	cfg.Upstream.Port = profile.Port
 	if err := config.Save(path, cfg); err != nil {
-		s.mu.Lock()
-		s.cfg = previous
-		s.mu.Unlock()
 		return err
 	}
-	return s.restartLane()
+	s.mu.Lock()
+	s.cfg = cfg
+	s.cachedUpstream = model.UpstreamStatus{URL: config.UpstreamURL(cfg.Upstream)}
+	s.testReport = nil
+	s.mu.Unlock()
+	s.applyLaneRouting(cfg)
+	return nil
 }

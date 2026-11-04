@@ -25,6 +25,9 @@ type EngineState struct {
 
 func ReadEngine(path string) (EngineState, error) {
 	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return EngineState{}, nil
+	}
 	if err != nil {
 		return EngineState{}, fmt.Errorf("read Codex config: %w", err)
 	}
@@ -89,7 +92,8 @@ func ResolveEngine(cfg model.Config, configPath string) (model.ResolvedEngine, e
 
 func SetEngine(path string, wsl bool) (string, error) {
 	data, err := os.ReadFile(path)
-	if err != nil {
+	existed := err == nil
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("read Codex config: %w", err)
 	}
 	content := strings.ReplaceAll(string(data), "\r\n", "\n")
@@ -131,9 +135,15 @@ func SetEngine(path string, wsl bool) (string, error) {
 	if err != nil || !verify.Present || verify.WSL != wsl {
 		return "", errors.New("engine setting verification failed")
 	}
-	backupPath := path + ".bak-" + time.Now().Format("20060102-150405")
-	if err := os.WriteFile(backupPath, data, 0o600); err != nil {
-		return "", fmt.Errorf("backup Codex config: %w", err)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("create Codex config directory: %w", err)
+	}
+	backupPath := ""
+	if existed {
+		backupPath = path + ".bak-" + time.Now().Format("20060102-150405.000000000")
+		if err := os.WriteFile(backupPath, data, 0o600); err != nil {
+			return "", fmt.Errorf("backup Codex config: %w", err)
+		}
 	}
 	if err := atomicWrite(path, []byte(next), 0o600); err != nil {
 		return backupPath, err

@@ -1,6 +1,13 @@
 package codex
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+
+	"github.com/Alexzzz2008/codex-lane/internal/config"
+	"github.com/Alexzzz2008/codex-lane/internal/model"
+)
 
 func TestParseEngine(t *testing.T) {
 	tests := []struct {
@@ -25,5 +32,44 @@ func TestParseEngine(t *testing.T) {
 				t.Fatalf("got wsl=%v present=%v", state.WSL, state.Present)
 			}
 		})
+	}
+}
+
+func TestMissingConfigDefaultsToWindowsWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "missing", "config.toml")
+	engine, err := ResolveEngine(config.Default(), path)
+	if err != nil || engine.Resolved != model.EngineWindows || engine.KeyPresent {
+		t.Fatalf("missing config: %+v, error: %v", engine, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatal("auto detection must not create Codex config")
+	}
+}
+
+func TestManualEngineCreatesMissingConfigAndPreservesExistingContent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "new", "config.toml")
+	backup, err := SetEngine(path, true)
+	if err != nil || backup != "" {
+		t.Fatalf("create engine setting: backup=%s, error=%v", backup, err)
+	}
+	state, err := ReadEngine(path)
+	if err != nil || !state.Present || !state.WSL {
+		t.Fatalf("WSL setting not created: %+v, error=%v", state, err)
+	}
+	original := "model = \"fixture\"\n[desktop]\nother = 123\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	backup, err = SetEngine(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := os.ReadFile(backup)
+	if err != nil || string(saved) != original {
+		t.Fatal("existing Codex config was not backed up intact")
+	}
+	state, err = ReadEngine(path)
+	if err != nil || !state.Present || state.WSL {
+		t.Fatalf("Windows setting not written: %+v, error=%v", state, err)
 	}
 }

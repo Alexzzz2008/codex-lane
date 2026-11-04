@@ -104,16 +104,6 @@
 
   async function launch(restart = false) {
     if (!snapshot) return;
-    if (!restart && snapshot.codex.running && !snapshot.codex.proxyMatched) {
-      modal = {
-        title: "Codex 正在运行，但未接入当前 Lane",
-        body: "Codex Desktop 是单实例应用，只启动新进程不会重新读取代理参数。",
-        note: "确认后只会结束当前 Codex 主进程，再按当前 Lane 双入口重新启动；不会结束其他应用。",
-        confirm: "重启并接入",
-        action: () => launch(true),
-      };
-      return;
-    }
     busy = restart ? "restart" : "launch";
     try {
       const result: LaunchResult = await AppService.LaunchCodex({ restartExisting: restart });
@@ -379,9 +369,10 @@
   async function saveSettings(input: SettingsInput): Promise<boolean> {
     loadSequence++;
     busy = "save";
+    const engineChanged = input.engine !== snapshot?.settings.engine || input.wslDistro !== snapshot?.settings.wslDistro;
     try {
       snapshot = await AppService.SaveSettings(input);
-      notify("ok", "配置已保存", "若上游或内核变化，请重启 Codex 使参数生效");
+      notify("ok", "配置已保存", engineChanged ? "内核环境将在下次启动 Codex 时生效" : "新连接使用当前代理，已有连接保持原链路");
       return true;
     } catch (error) {
       notify("error", "配置保存失败", errorText(error));
@@ -562,6 +553,7 @@
           onNavigate={navigate}
           onDiagnostics={openChecks}
           onRunTests={runTests}
+          onSwitchUpstream={switchUpstream}
         />
       {:else if activePage === "requests"}
         <Requests {snapshot} {busy} onClear={clearRequests} onExport={exportReport} />

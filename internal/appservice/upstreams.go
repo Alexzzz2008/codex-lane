@@ -3,6 +3,7 @@ package appservice
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Alexzzz2008/codex-lane/internal/config"
@@ -13,27 +14,45 @@ import (
 func (s *AppService) ProbeAllUpstreams() []model.UpstreamProbeResult {
 	s.mu.RLock()
 	cfg := s.cfg
+	ctx := s.ctx
 	s.mu.RUnlock()
-	results := make([]model.UpstreamProbeResult, 0, len(cfg.Upstreams))
-	for _, profile := range cfg.Upstreams {
-		result := model.UpstreamProbeResult{
-			Name:     profile.Name,
-			Protocol: profile.Protocol,
-			Host:     profile.Host,
-			Port:     profile.Port,
-		}
-		candidate := model.Upstream{Protocol: profile.Protocol, Host: profile.Host, Port: profile.Port}
-		probeCtx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
-		latency, err := gateway.CheckUpstreamTunnel(probeCtx, candidate, "auth.openai.com:443")
-		cancel()
-		if err != nil {
-			result.Error = err.Error()
-		} else {
-			result.Reachable = true
-			result.LatencyMs = latency.Milliseconds()
-		}
-		results = append(results, result)
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	results := make([]model.UpstreamProbeResult, len(cfg.Upstreams))
+	limit := make(chan struct{}, 4)
+	var pending sync.WaitGroup
+	for index, profile := range cfg.Upstreams {
+		pending.Add(1)
+		go func() {
+			defer pending.Done()
+			result := model.UpstreamProbeResult{
+				Name:     profile.Name,
+				Protocol: profile.Protocol,
+				Host:     profile.Host,
+				Port:     profile.Port,
+			}
+			defer func() { results[index] = result }()
+			select {
+			case limit <- struct{}{}:
+				defer func() { <-limit }()
+			case <-ctx.Done():
+				result.Error = ctx.Err().Error()
+				return
+			}
+			candidate := model.Upstream{Protocol: profile.Protocol, Host: profile.Host, Port: profile.Port}
+			latency, err := gateway.CheckUpstreamTunnel(ctx, candidate, "auth.openai.com:443")
+			if err != nil {
+				result.Error = err.Error()
+			} else {
+				result.Reachable = true
+				result.LatencyMs = latency.Milliseconds()
+			}
+		}()
+	}
+	pending.Wait()
 	return results
 }
 
@@ -56,7 +75,7 @@ func (s *AppService) SelectFastestUpstream() (model.Snapshot, error) {
 	cfg := s.cfg
 	profile := model.UpstreamProfile{}
 	for _, item := range cfg.Upstreams {
-		if item.Name == winner.Name {
+		if item.Name == winner.Name && item.Protocol == winner.Protocol && item.Host == winner.Host && item.Port == winner.Port {
 			profile = item
 		}
 	}
@@ -64,7 +83,7 @@ func (s *AppService) SelectFastestUpstream() (model.Snapshot, error) {
 	if profile.Name == "" {
 		return model.Snapshot{}, fmt.Errorf("upstream profile %q does not exist", winner.Name)
 	}
-	if err := s.switchToProfile(profile, model.Upstream{Protocol: profile.Protocol, Host: profile.Host, Port: profile.Port}); err != nil {
+	if err := s.switchToProfile(profile); err != nil {
 		return model.Snapshot{}, err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -90,7 +109,7 @@ func (s *AppService) SwitchUpstream(name string) (model.Snapshot, error) {
 		defer cancel()
 		return s.snapshot(ctx, false), nil
 	}
-	if err := s.switchToProfile(profile, model.Upstream{Protocol: profile.Protocol, Host: profile.Host, Port: profile.Port, NoProxy: cfg.Upstream.NoProxy}); err != nil {
+	if err := s.switchToProfile(profile); err != nil {
 		return model.Snapshot{}, err
 	}
 	s.addEvent("ok", "已切换上游代理", config.UpstreamURL(model.Upstream{Protocol: profile.Protocol, Host: profile.Host, Port: profile.Port}))
