@@ -62,6 +62,11 @@ function Invoke-Page([string]$Name) {
     if (-not $element) { throw "Missing native UI control: $Name" }
     $element.GetCurrentPattern([Windows.Automation.InvokePattern]::Pattern).Invoke()
     Start-Sleep -Milliseconds 350
+    $scrollCondition = New-Object Windows.Automation.PropertyCondition([Windows.Automation.AutomationElement]::IsScrollPatternAvailableProperty, $true)
+    foreach ($area in $automation.FindAll([Windows.Automation.TreeScope]::Descendants, $scrollCondition)) {
+        $scroll = $area.GetCurrentPattern([Windows.Automation.ScrollPattern]::Pattern)
+        if ($scroll.Current.VerticallyScrollable) { $scroll.SetScrollPercent(-1, 0) }
+    }
 }
 function Capture-Window([string]$Name) {
     [LaneSmokeWindow]::SetForegroundWindow($script:windowHandle) | Out-Null

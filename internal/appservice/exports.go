@@ -141,7 +141,7 @@ func (s *AppService) History(hours int) ([]model.HistoryPoint, error) {
 		point.Requests++
 		point.BytesUp += record.BytesUp
 		point.BytesDown += record.BytesDown
-		if latency := recordLatencyValue(record); latency > 0 {
+		if latency := recordLatencyValue(record); latency > 0 || (record.Method != "" && record.Status > 0) {
 			latencySum[hour] += latency
 			latencyCount[hour]++
 		}
@@ -159,7 +159,7 @@ func (s *AppService) History(hours int) ([]model.HistoryPoint, error) {
 }
 
 func recordLatencyValue(record model.RequestRecord) int64 {
-	if record.LatencyMs > 0 {
+	if record.LatencyMs > 0 || record.Method != "" {
 		return record.LatencyMs
 	}
 	return record.DurationMs

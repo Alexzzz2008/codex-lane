@@ -24,7 +24,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.44"
+const Version = "0.1.45"
 
 type Emitter func(name string, data ...any)
 
@@ -484,10 +484,10 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 	}
 	if cfg.RequireHealthyProxy {
 		probeCtx, probeCancel := context.WithTimeout(ctx, 10*time.Second)
-		_, probeErr := gateway.CheckUpstreamTunnel(probeCtx, cfg.Upstream, "auth.openai.com:443")
+		probeErr := checkLaunchRoute(probeCtx, lane.InterfaceURL(), authDiscoveryURL)
 		probeCancel()
 		if probeErr != nil {
-			return model.LaunchResult{}, fmt.Errorf("上游代理无法出网，请先切换 Clash 节点后重试：%w", probeErr)
+			return model.LaunchResult{}, fmt.Errorf("Lane 无法访问登录服务，已保留当前 Codex，请检查代理与分流设置：%w", probeErr)
 		}
 	}
 	if status.Running {
@@ -503,6 +503,23 @@ func (s *AppService) LaunchCodex(options model.LaunchOptions) (model.LaunchResul
 	}
 	s.addEvent("ok", "Codex 已启动", "PID "+fmt.Sprint(result.PID)+" · "+engine.Resolved)
 	return result, nil
+}
+
+func checkLaunchRoute(ctx context.Context, proxyURL, targetURL string) error {
+	status, body, _, err := gateway.HTTPBodyThroughProxy(ctx, proxyURL, targetURL)
+	if err != nil {
+		return err
+	}
+	if status != 200 {
+		return fmt.Errorf("登录服务返回 HTTP %d", status)
+	}
+	var discovery struct {
+		Issuer string `json:"issuer"`
+	}
+	if json.Unmarshal(body, &discovery) != nil || strings.TrimSpace(discovery.Issuer) == "" {
+		return errors.New("登录服务未返回有效的发现配置")
+	}
+	return nil
 }
 
 func proxyLabel(url string) string {

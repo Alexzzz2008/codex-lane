@@ -1862,6 +1862,8 @@
     .btn, .nav button, .segmented button, .mode-seg button, .run-state, .filter-btn { font-weight: 500; }
     .nav button.active, .segmented button.active, .mode-seg button.active { font-weight: 600; }
     .save-error { margin: 12px 0 0; padding: 10px; color: var(--red); background: var(--red-soft); border: 1px solid var(--red-line); border-radius: var(--radius-sm); font-size: var(--fs-xs); line-height: 1.6; }
+    .history-error { display: flex; align-items: center; gap: 12px; padding: 0 18px 12px; color: var(--red); font-size: var(--fs-xs); }
+    .history-error span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
     @media (min-width: 1181px) { .settings-side { position: sticky; top: 0; } }
     @media (max-width: 1180px) {
       .request-detail { min-height: 0; }

@@ -20,7 +20,7 @@
   }: {
     snapshot: Snapshot;
     busy?: string;
-    onSave: (input: SettingsInput) => Promise<boolean>;
+    onSave: (input: SettingsInput, fields: Array<keyof SettingsInput>) => Promise<boolean>;
     onProbe: (input: SettingsInput) => Promise<UpstreamStatus | null>;
     onCheckUpdate: (silent?: boolean) => Promise<UpdateStatus | null>;
     onDownloadUpdate: () => Promise<void>;
@@ -87,6 +87,8 @@
   let autosaving = $state(false);
   let saveError = $state("");
   let pendingSave = false;
+  let pendingManualSave = false;
+  const autoSaveFields = new Set<keyof SettingsInput>();
   let saveTimer: number | undefined;
   let installing = $state("");
   let installNote = $state("");
@@ -282,7 +284,8 @@
     touch();
   }
 
-  function scheduleAutoSave() {
+  function scheduleAutoSave(...fields: Array<keyof SettingsInput>) {
+    fields.forEach((key) => autoSaveFields.add(key));
     saveError = "";
     dirty = true;
     if (saveTimer) window.clearTimeout(saveTimer);
@@ -293,39 +296,54 @@
   }
 
   async function autoSave() {
-    await save();
+    await save(true);
   }
 
-  async function save(): Promise<boolean> {
+  async function save(automatic = false): Promise<boolean> {
     if (saveTimer !== undefined) {
       window.clearTimeout(saveTimer);
       saveTimer = undefined;
     }
     if (autosaving) {
       pendingSave = true;
+      pendingManualSave ||= !automatic;
       return false;
     }
+    const payload = buildPayload();
+    const original = baseline ? JSON.parse(baseline) as SettingsInput : fromSnapshot(snapshot);
+    const fields = automatic ? [...autoSaveFields] : keys.filter((key) => JSON.stringify(payload[key]) !== JSON.stringify(original[key]));
+    const proxyFields: Array<keyof SettingsInput> = ["protocol", "host", "port", "activeUpstream", "upstreams"];
+    if (!automatic && fields.some((key) => proxyFields.includes(key))) {
+      for (const key of proxyFields) if (!fields.includes(key)) fields.push(key);
+    }
+    if (!fields.length) return true;
+    fields.forEach((key) => autoSaveFields.delete(key));
     autosaving = true;
     saveError = "";
-    const payload = buildPayload();
-    const submitted = JSON.stringify(payload);
     try {
-      const success = await onSave(payload);
+      const success = await onSave(payload, fields);
       if (success) {
-        const unchanged = JSON.stringify(buildPayload()) === submitted;
+        const current = buildPayload();
         const saved = fromSnapshot(snapshot);
+        const preserved = keys.filter((key) => JSON.stringify(current[key]) !== JSON.stringify(payload[key]) ||
+          (!fields.includes(key) && JSON.stringify(payload[key]) !== JSON.stringify(original[key])));
+        draft = { ...saved, ...Object.fromEntries(preserved.map((key) => [key, current[key]])) } as SettingsInput;
         baseline = JSON.stringify(saved);
         lastIncoming = baseline;
-        if (unchanged) draft = saved;
         dirty = JSON.stringify(buildPayload()) !== baseline;
       }
-      if (!success) saveError = "保存未完成，请检查输入后重试。当前更改已保留。";
+      if (!success) {
+        if (automatic) fields.forEach((key) => autoSaveFields.add(key));
+        saveError = "保存未完成，请检查输入后重试。当前更改已保留。";
+      }
       return success;
     } finally {
       autosaving = false;
       if (pendingSave) {
         pendingSave = false;
-        void autoSave();
+        const manual = pendingManualSave;
+        pendingManualSave = false;
+        void save(!manual);
       }
     }
   }
@@ -344,6 +362,8 @@
     if (saveTimer !== undefined) window.clearTimeout(saveTimer);
     saveTimer = undefined;
     pendingSave = false;
+    pendingManualSave = false;
+    autoSaveFields.clear();
     draft = fromSnapshot(snapshot);
     baseline = JSON.stringify(draft);
     lastIncoming = baseline;
@@ -377,7 +397,7 @@
     draft.upstreams = profiles.filter((_, i) => i !== index);
     if (draft.activeUpstream === removed?.name) draft.activeUpstream = "";
     speedResults = null;
-    scheduleAutoSave();
+    touch();
   }
 
   function addRoute() {
@@ -398,7 +418,7 @@
 
   function removeRoute(index: number) {
     draft.routes = routes.filter((_, i) => i !== index);
-    scheduleAutoSave();
+    touch();
   }
 
   function addAllowedHost() {
@@ -419,12 +439,12 @@
 
   function removeAllowedHost(index: number) {
     draft.allowedHosts = allowedHosts.filter((_, i) => i !== index);
-    scheduleAutoSave();
+    touch();
   }
 
   function toggleAllowlist() {
     draft.hostFilterMode = draft.hostFilterMode === "allowlist" ? "off" : "allowlist";
-    scheduleAutoSave();
+    touch();
   }
 
   function moveRoute(index: number, direction: -1 | 1) {
@@ -434,7 +454,7 @@
     const [item] = next.splice(index, 1);
     next.splice(target, 0, item);
     draft.routes = next;
-    scheduleAutoSave();
+    touch();
   }
 
   function submitOnEnter(event: KeyboardEvent, action: () => void) {
@@ -656,7 +676,7 @@
         <div class="setting-row">
           <div class="setting-copy"><b>故障自动切换</b><span>连续两次探测失败时，自动切到第一个可用的其他档案。</span></div>
           <div class="setting-control">
-            <button class:off={!draft.autoFailover} class="switch" aria-pressed={draft.autoFailover} aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave(); }}></button>
+            <button class:off={!draft.autoFailover} class="switch" aria-pressed={draft.autoFailover} aria-label="故障自动切换" onclick={() => { draft.autoFailover = !draft.autoFailover; scheduleAutoSave("autoFailover"); }}></button>
             <button class="btn small" onclick={() => void runSpeedTest()} disabled={speedBusy || busy === "switch" || busy === "save"}>
               {#if speedBusy}<span class="spin"><Icon name="refresh" size={13} /></span>{:else}<Icon name="activity" size={13} />{/if}
               测速
@@ -783,16 +803,16 @@
           <div class="setting-copy"><b>内核模式</b><span>自动只读取 config.toml；手动切换会先备份再原子替换。</span></div>
           <div class="setting-control">
             <div class="mode-seg" role="group" aria-label="内核模式">
-              <button class:active={draft.engine === "auto"} onclick={() => { draft.engine = "auto"; scheduleAutoSave(); }}><i class="mini"></i>自动</button>
-              <button class:active={draft.engine === "windows"} onclick={() => { draft.engine = "windows"; scheduleAutoSave(); }}>Windows</button>
-              <button class:active={draft.engine === "wsl"} onclick={() => { draft.engine = "wsl"; scheduleAutoSave(); }}>WSL</button>
+              <button class:active={draft.engine === "auto"} onclick={() => { draft.engine = "auto"; scheduleAutoSave("engine"); }}><i class="mini"></i>自动</button>
+              <button class:active={draft.engine === "windows"} onclick={() => { draft.engine = "windows"; scheduleAutoSave("engine"); }}>Windows</button>
+              <button class:active={draft.engine === "wsl"} onclick={() => { draft.engine = "wsl"; scheduleAutoSave("engine"); }}>WSL</button>
             </div>
           </div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>WSL 预检发行版</b><span>检查 mirrored 网络与互通；Codex 使用的发行版由其自身设置决定。</span></div>
           <div class="setting-control">
-            <select class="native-select" bind:value={draft.wslDistro} onchange={scheduleAutoSave} aria-label="WSL 发行版">
+            <select class="native-select" bind:value={draft.wslDistro} onchange={() => scheduleAutoSave("wslDistro")} aria-label="WSL 发行版">
               <option value="">自动选择</option>
               {#each distros as distro}<option value={distro}>{distro}</option>{/each}
             </select>
@@ -818,28 +838,28 @@
         <div class="panel-head"><div><h2 class="panel-title">启动、隔离与记录</h2><p class="panel-sub">默认最小权限，所有变更都可见、可撤销。</p></div></div>
         <div class="setting-row">
           <div class="setting-copy"><b>发现原生 Codex 时提示接入</b><span>{snapshot.codexWatchError || "支持任意启动顺序。发现后先询问，可选择现在重启或稍后接入。"}</span></div>
-          <div class="setting-control"><button class:off={!draft.promptCodexProxy} class="switch" aria-pressed={draft.promptCodexProxy} aria-label="发现原生 Codex 时提示接入" onclick={() => { draft.promptCodexProxy = !draft.promptCodexProxy; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.promptCodexProxy} class="switch" aria-pressed={draft.promptCodexProxy} aria-label="发现原生 Codex 时提示接入" onclick={() => { draft.promptCodexProxy = !draft.promptCodexProxy; scheduleAutoSave("promptCodexProxy"); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>启动 Lane 时打开 Codex</b><span>只有显式开启后才会拉起 Codex Desktop。</span></div>
-          <div class="setting-control"><button class:off={!draft.openCodex} class="switch" aria-pressed={draft.openCodex} aria-label="启动 Lane 时打开 Codex" onclick={() => { draft.openCodex = !draft.openCodex; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.openCodex} class="switch" aria-pressed={draft.openCodex} aria-label="启动 Lane 时打开 Codex" onclick={() => { draft.openCodex = !draft.openCodex; scheduleAutoSave("openCodex"); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>退出 Lane 时同步停止 Codex</b><span>默认关闭。开启后，退出应用会结束 Codex；更新重启时保留 Codex。</span></div>
-          <div class="setting-control"><button class:off={!draft.stopCodexOnExit} class="switch" aria-pressed={draft.stopCodexOnExit} aria-label="退出 Lane 时同步停止 Codex" onclick={() => { draft.stopCodexOnExit = !draft.stopCodexOnExit; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.stopCodexOnExit} class="switch" aria-pressed={draft.stopCodexOnExit} aria-label="退出 Lane 时同步停止 Codex" onclick={() => { draft.stopCodexOnExit = !draft.stopCodexOnExit; scheduleAutoSave("stopCodexOnExit"); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>关闭窗口时最小化到托盘</b><span>点关闭按钮隐藏到系统托盘，从托盘菜单退出；重启应用后生效。</span></div>
-          <div class="setting-control"><button class:off={!draft.minimizeToTray} class="switch" aria-pressed={draft.minimizeToTray} aria-label="关闭窗口时最小化到托盘" onclick={() => { draft.minimizeToTray = !draft.minimizeToTray; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.minimizeToTray} class="switch" aria-pressed={draft.minimizeToTray} aria-label="关闭窗口时最小化到托盘" onclick={() => { draft.minimizeToTray = !draft.minimizeToTray; scheduleAutoSave("minimizeToTray"); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>开机自动启动</b><span>登录 Windows 后自动打开 Lane，保存后生效。</span></div>
-          <div class="setting-control"><button class:off={!draft.launchAtLogin} class="switch" aria-pressed={draft.launchAtLogin} aria-label="开机自动启动" onclick={() => { draft.launchAtLogin = !draft.launchAtLogin; scheduleAutoSave(); }}></button></div>
+          <div class="setting-control"><button class:off={!draft.launchAtLogin} class="switch" aria-pressed={draft.launchAtLogin} aria-label="开机自动启动" onclick={() => { draft.launchAtLogin = !draft.launchAtLogin; scheduleAutoSave("launchAtLogin"); }}></button></div>
         </div>
         <div class="setting-row">
           <div class="setting-copy"><b>请求元数据日志</b><span>记录域名、端口、状态、流量和耗时，不读取 HTTPS 内容。</span></div>
           <div class="setting-control">
-            <select class="native-select" bind:value={draft.retentionDays} onchange={scheduleAutoSave} aria-label="日志保留天数">
+            <select class="native-select" bind:value={draft.retentionDays} onchange={() => scheduleAutoSave("retentionDays")} aria-label="日志保留天数">
               <option value={7}>保留 7 天</option>
               <option value={14}>保留 14 天</option>
               <option value={30}>保留 30 天</option>
@@ -849,7 +869,7 @@
         <div class="setting-row">
           <div class="setting-copy"><b>内存日志容量</b><span>保存后立即调整，保留最近记录；不会删除磁盘日志。</span></div>
           <div class="setting-control">
-            <select class="native-select" bind:value={draft.maxMemoryRows} onchange={scheduleAutoSave} aria-label="内存日志容量">
+            <select class="native-select" bind:value={draft.maxMemoryRows} onchange={() => scheduleAutoSave("maxMemoryRows")} aria-label="内存日志容量">
               {#if ![1000, 5000, 10000, 20000].includes(draft.maxMemoryRows)}<option value={draft.maxMemoryRows}>{draft.maxMemoryRows} 条</option>{/if}
               <option value={1000}>1,000 条</option><option value={5000}>5,000 条</option><option value={10000}>10,000 条</option><option value={20000}>20,000 条</option>
             </select>
@@ -860,7 +880,7 @@
 
     <aside class="settings-side">
       <div class="panel apply-card">
-        <div class="panel-head"><div><h2 class="panel-title">应用配置</h2><p class="panel-sub">开关与下拉即时保存；地址和端口确认后应用。</p></div><div class="right"><span class={`result-pill ${autosaving ? "run" : changeCount ? "run" : "pass"}`}>{autosaving ? "保存中…" : changeCount ? `${changeCount} 项待应用` : "已保存"}</span></div></div>
+        <div class="panel-head"><div><h2 class="panel-title">应用配置</h2><p class="panel-sub">运行选项自动保存；代理、档案与规则需确认应用。</p></div><div class="right"><span class={`result-pill ${autosaving ? "run" : changeCount ? "run" : "pass"}`}>{autosaving ? "保存中…" : changeCount ? `${changeCount} 项待应用` : "已保存"}</span></div></div>
         <div class="apply-body">
           <div class="apply-summary">
             <div class="apply-row"><span class="k">上游代理</span><span class="v mono">{upstreamProtocol(draft.protocol)} · {draft.host}:{draft.port}</span></div>
@@ -870,11 +890,11 @@
             <div class="apply-row"><span class="k">内核切换</span><span class="v">下次启动 Codex 生效</span></div>
           </div>
           <div class="apply-actions">
-            <button class="btn dark" onclick={save} disabled={!dirty || busy === "save"}>
+            <button class="btn dark" onclick={() => void save()} disabled={!dirty || autosaving || busy === "save"}>
               {#if busy === "save"}<span class="spin"><Icon name="refresh" size={14} /></span>{:else}<Icon name="check" size={14} />{/if}
               保存并应用
             </button>
-            <button class="btn" onclick={cancel} disabled={!dirty}>取消更改</button>
+            <button class="btn" onclick={cancel} disabled={!dirty || autosaving}>取消更改</button>
           </div>
           {#if saveError}<p class="save-error" role="alert">{saveError}</p>{/if}
         </div>

@@ -188,7 +188,7 @@ func (s *Store) account(record model.RequestRecord) {
 			s.failed++
 		}
 	}
-	if latency := recordLatency(record); latency > 0 && !previous.latency {
+	if latency := recordLatency(record); (latency > 0 || (record.Method != "" && record.Status > 0)) && !previous.latency {
 		b.lat += latency
 		b.count++
 		s.latencies = append(s.latencies, latency)
@@ -418,7 +418,7 @@ func percentile(sorted []int64, p float64) int64 {
 }
 
 func recordLatency(record model.RequestRecord) int64 {
-	if record.LatencyMs > 0 {
+	if record.LatencyMs > 0 || record.Method != "" {
 		return record.LatencyMs
 	}
 	return record.DurationMs

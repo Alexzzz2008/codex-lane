@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sync"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Alexzzz2008/codex-lane/internal/codex"
 	"github.com/Alexzzz2008/codex-lane/internal/config"
+	"github.com/Alexzzz2008/codex-lane/internal/gateway"
 	"github.com/Alexzzz2008/codex-lane/internal/model"
 	"github.com/Alexzzz2008/codex-lane/internal/platform"
 )
@@ -221,5 +223,50 @@ func TestFailedSettingsSaveDoesNotChangeCodexEngine(t *testing.T) {
 	state, err := codex.ReadEngine(filepath.Join(service.paths.CodexHome, "config.toml"))
 	if err != nil || state.Present {
 		t.Fatalf("failed save changed Codex: %+v, %v", state, err)
+	}
+}
+
+func TestLaunchPreflightUsesLaneRules(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, `{"issuer":"https://auth.example.test"}`)
+	}))
+	defer target.Close()
+	for _, blocked := range []bool{false, true} {
+		t.Run(fmt.Sprint(blocked), func(t *testing.T) {
+			options := gateway.Options{Host: "127.0.0.1", Routes: []model.RouteRule{{Pattern: "127.0.0.1", Action: model.RouteDirect}}}
+			if blocked {
+				options.HostFilterMode = model.HostFilterAllowlist
+				options.AllowedHosts = []string{"example.test"}
+			}
+			lane, err := gateway.Start(context.Background(), options)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lane.Close(context.Background())
+			err = checkLaunchRoute(context.Background(), lane.InterfaceURL(), target.URL)
+			if blocked && err == nil {
+				t.Fatal("preflight ignored the Lane allowlist")
+			}
+			if !blocked && err != nil {
+				t.Fatalf("working Lane route was rejected: %v", err)
+			}
+		})
+	}
+}
+
+func TestLaunchPreflightRejectsInvalidDiscovery(t *testing.T) {
+	for _, body := range []string{`<html>proxy error</html>`, `{}`, `{"issuer":12}`} {
+		t.Run(body, func(t *testing.T) {
+			target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = io.WriteString(w, body) }))
+			defer target.Close()
+			lane, err := gateway.Start(context.Background(), gateway.Options{Host: "127.0.0.1", Routes: []model.RouteRule{{Pattern: "127.0.0.1", Action: model.RouteDirect}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lane.Close(context.Background())
+			if err := checkLaunchRoute(context.Background(), lane.InterfaceURL(), target.URL); err == nil {
+				t.Fatal("preflight accepted a non-discovery response")
+			}
+		})
 	}
 }

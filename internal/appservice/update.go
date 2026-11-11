@@ -219,28 +219,25 @@ func (s *AppService) checkForUpdates(manual bool) {
 				status.Error = "GitHub 暂时限制了更新检查"
 			}
 		}
-		if previous.Status == "ready" && s.updateReadyFor(previous.LatestVersion) {
-			previous.Error = status.Error + "；已下载的更新仍可安装"
-			previous.CheckedAt = checking.CheckedAt
-			status = previous
-		}
-		s.setUpdateStatus(status)
-		if manual && status.Status == "error" {
-			s.addEvent("error", "更新检查失败", status.Error)
-		}
+		s.finishUpdateCheckError(previous, status, manual)
 		return
 	}
 	if !isVersion(manifest.Version) {
-		s.setUpdateStatus(model.UpdateStatus{
+		s.finishUpdateCheckError(previous, model.UpdateStatus{
 			CurrentVersion: Version,
 			Status:         "error",
 			CheckedAt:      checking.CheckedAt,
 			Error:          "无法识别最新版本号",
-		})
+		}, manual)
 		return
 	}
 
 	status, asset := evaluateManifest(manifest, Version, checking.CheckedAt)
+	if status.Status == "error" {
+		status.Available = false
+		s.finishUpdateCheckError(previous, status, manual)
+		return
+	}
 	if compareVersions(manifest.Version, Version) <= 0 {
 		s.setUpdateStatus(status)
 		s.clearStaleUpdate(manifest.Version)
@@ -261,6 +258,18 @@ func (s *AppService) checkForUpdates(manual bool) {
 		if s.updateDownloadRunning.CompareAndSwap(false, true) {
 			go s.downloadUpdate(manifest)
 		}
+	}
+}
+
+func (s *AppService) finishUpdateCheckError(previous, status model.UpdateStatus, manual bool) {
+	if previous.Status == "ready" && s.updateReadyFor(previous.LatestVersion) {
+		previous.Error = status.Error + "；已下载的更新仍可安装"
+		previous.CheckedAt = status.CheckedAt
+		status = previous
+	}
+	s.setUpdateStatus(status)
+	if manual && status.Status == "error" {
+		s.addEvent("error", "更新检查失败", status.Error)
 	}
 }
 

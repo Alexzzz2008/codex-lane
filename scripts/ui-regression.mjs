@@ -32,7 +32,7 @@ export async function LaunchCodex(options){(window.__qa.launches??=[]).push(opti
 export async function StopLane(){state.lane.running=false;}
 export async function StartLane(){state.lane.running=true;}
 export async function RunTests(){state.testReport={healthy:true,score:100,results:[],durationMs:100,finishedAt:now};return state.testReport;}
-export async function History(hours){window.__qa.history.push(hours);await new Promise(resolve=>setTimeout(resolve,hours===24?700:100));return [{time:hours===24?'OLD-24H':'NEW-7D',bytesDown:111,latencyMs:33}];}
+export async function History(hours){window.__qa.history.push(hours);await new Promise(resolve=>setTimeout(resolve,hours===24?700:100));if(window.__qa.failHistory)throw Error('模拟历史读取失败');return [{time:hours===24?'OLD-24H':'NEW-7D',bytesDown:111,latencyMs:33}];}
 `;
 
 const browser = await chromium.launch({headless:true});
@@ -44,10 +44,27 @@ await page.route(/\/@wailsio_runtime\.js(\?.*)?$/,route=>route.fulfill({contentT
 await page.goto(process.env.QA_URL || 'http://127.0.0.1:19245/');
 await page.getByRole('button',{name:'设置',exact:true}).click();
 await page.getByRole('heading',{name:'应用配置',exact:true}).waitFor();
+await page.getByRole('textbox',{name:'上游地址',exact:true}).fill('127.0.0.9');
+await page.getByRole('combobox',{name:'日志保留天数',exact:true}).selectOption('30');
+await page.waitForFunction(()=>window.__qa.state.settings.retentionDays===30);
+assert.equal(await page.evaluate(()=>window.__qa.state.settings.host),'127.0.0.1','automatic save must not apply a manual proxy draft');
+assert.equal(await page.getByRole('textbox',{name:'上游地址',exact:true}).inputValue(),'127.0.0.9','manual draft must survive automatic saving');
+await page.getByRole('button',{name:'取消更改',exact:true}).click();
+await page.evaluate(()=>window.__qa.saveDelay=900);
+const raceStart=await page.evaluate(()=>window.__qa.saves.length);
+await page.getByRole('button',{name:'启动 Lane 时打开 Codex',exact:true}).click();
+await page.waitForFunction(count=>window.__qa.saves.length>count,raceStart);
+await page.getByRole('button',{name:'总览',exact:true}).click();
+await page.getByRole('button',{name:'设置',exact:true}).click();
+await page.getByRole('combobox',{name:'内存日志容量',exact:true}).selectOption('5000');
+await page.waitForFunction(()=>window.__qa.state.settings.maxMemoryRows===5000);
+assert.equal(await page.evaluate(()=>window.__qa.state.settings.openCodex),true,'returning to settings must not revert an in-flight save');
+await page.evaluate(()=>window.__qa.saveDelay=600);
+const initialSaves=await page.evaluate(()=>window.__qa.saves.length);
 await page.getByRole('button',{name:'开机自动启动',exact:true}).click();
-await page.waitForFunction(()=>window.__qa.saves.length===1);
+await page.waitForFunction(count=>window.__qa.saves.length===count+1,initialSaves);
 await page.getByRole('button',{name:'故障自动切换',exact:true}).click();
-await page.waitForFunction(()=>window.__qa.saves.length===2);
+await page.waitForFunction(count=>window.__qa.saves.length===count+2,initialSaves);
 await page.waitForFunction(()=>window.__qa.state.settings.autoFailover===true);
 assert.equal(await page.getByRole('button',{name:'故障自动切换',exact:true}).evaluate(element=>element.classList.contains('off')),false);
 assert.equal(await page.getByRole('button',{name:'开机自动启动',exact:true}).evaluate(element=>element.classList.contains('off')),false);
@@ -85,11 +102,41 @@ await page.getByText('配置保存失败',{exact:true}).waitFor();
 assert.equal(await page.getByRole('textbox',{name:'档案名称',exact:true}).inputValue(),'QA profile','invalid profile must not disappear');
 await page.getByRole('button',{name:'取消更改',exact:true}).click();
 await page.getByRole('button',{name:'总览',exact:true}).click();
+await page.evaluate(()=>{
+ window.__qa.beforeProfileRace=structuredClone(window.__qa.state.settings);
+ Object.assign(window.__qa.state.settings,{activeUpstream:'档案 A',protocol:'http',host:'127.0.0.1',port:7897,upstreams:[{name:'档案 A',protocol:'http',host:'127.0.0.1',port:7897},{name:'档案 B',protocol:'socks5',host:'127.0.0.2',port:1080}]});
+});
+await page.getByRole('button',{name:'刷新状态',exact:true}).click();
+await page.getByRole('button',{name:'设置',exact:true}).click();
+await page.getByRole('textbox',{name:'上游地址',exact:true}).fill('127.0.0.3');
+await page.evaluate(()=>Object.assign(window.__qa.state.settings,{activeUpstream:'档案 B',protocol:'socks5',host:'127.0.0.2',port:1080}));
+await page.getByRole('button',{name:'刷新状态',exact:true}).click();
+await page.getByRole('button',{name:'保存并应用',exact:true}).click();
+await page.waitForFunction(()=>window.__qa.state.settings.host==='127.0.0.3');
+assert.equal(await page.evaluate(()=>window.__qa.state.settings.activeUpstream),'档案 A','manual proxy draft must keep its selected profile after automatic failover');
+assert.equal(await page.evaluate(()=>window.__qa.state.settings.upstreams[1].host),'127.0.0.2','saving profile A must not change profile B');
+await page.getByRole('textbox',{name:'档案名称',exact:true}).first().fill('档案 A 新版');
+await page.evaluate(()=>Object.assign(window.__qa.state.settings,{activeUpstream:'档案 B',protocol:'socks5',host:'127.0.0.2',port:1080}));
+await page.getByRole('button',{name:'刷新状态',exact:true}).click();
+await page.getByRole('button',{name:'保存并应用',exact:true}).click();
+await page.waitForFunction(()=>window.__qa.state.settings.activeUpstream==='档案 A 新版');
+assert.equal(await page.evaluate(()=>window.__qa.state.settings.protocol),'http','renamed profile must keep its own proxy protocol');
+assert.equal(await page.evaluate(()=>window.__qa.state.settings.port),7897,'renamed profile must keep its own port');
+await page.evaluate(()=>window.__qa.state.settings=window.__qa.beforeProfileRace);
+await page.getByRole('button',{name:'刷新状态',exact:true}).click();
+await page.getByRole('button',{name:'总览',exact:true}).click();
 await page.getByRole('button',{name:'24 小时',exact:true}).click();
 await page.getByRole('button',{name:'7 天',exact:true}).click();
 await page.getByText('NEW-7D',{exact:true}).first().waitFor();
 await page.waitForTimeout(800);
 assert.equal(await page.getByText('NEW-7D',{exact:true}).count()>0,true,'stale history response must be ignored');
+await page.evaluate(()=>window.__qa.failHistory=true);
+await page.getByRole('button',{name:'24 小时',exact:true}).click();
+await page.getByRole('alert').filter({hasText:'模拟历史读取失败'}).waitFor();
+assert.equal(await page.locator('.chart-svg path').count(),0,'failed history must not display live data under a historical label');
+await page.evaluate(()=>window.__qa.failHistory=false);
+await page.getByRole('button',{name:'重试历史',exact:true}).click();
+await page.getByText('OLD-24H',{exact:true}).first().waitFor();
 await page.getByRole('button',{name:'请求日志',exact:true}).click();
 await page.getByRole('button',{name:'异常 1',exact:true}).click();
 assert.equal(await page.getByText('pending.test',{exact:true}).count(),0,'pending connections must not count as abnormal');

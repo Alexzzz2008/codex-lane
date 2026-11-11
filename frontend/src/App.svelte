@@ -45,6 +45,8 @@
   let requestRenderTimer: number | undefined;
   const pendingRequests = new Map<string, RequestRecord>();
   let promptedCodexPID = $state(0);
+  let saveTail: Promise<unknown> = Promise.resolve();
+  let queuedSaves = 0;
 
   function focusDialog(node: HTMLElement) {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -391,9 +393,18 @@
     window.setTimeout(() => document.getElementById("settings-about")?.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
   }
 
-  async function saveSettings(input: SettingsInput): Promise<boolean> {
+  function saveSettings(input: SettingsInput, fields: Array<keyof SettingsInput>): Promise<boolean> {
+    const patch = Object.fromEntries(fields.map((key) => [key, input[key]]));
+    queuedSaves++;
+    const pending = saveTail.then(() => persistSettings(patch));
+    saveTail = pending.catch(() => false);
+    return pending;
+  }
+
+  async function persistSettings(patch: Partial<SettingsInput>): Promise<boolean> {
     loadSequence++;
     busy = "save";
+    const input = JSON.parse(JSON.stringify({ ...snapshot!.settings, ...patch })) as SettingsInput;
     const engineChanged = input.engine !== snapshot?.settings.engine || input.wslDistro !== snapshot?.settings.wslDistro;
     try {
       snapshot = await AppService.SaveSettings(input);
@@ -403,7 +414,8 @@
       notify("error", "配置保存失败", errorText(error));
       return false;
     } finally {
-      busy = "";
+      queuedSaves--;
+      if (!queuedSaves && busy === "save") busy = "";
     }
   }
 

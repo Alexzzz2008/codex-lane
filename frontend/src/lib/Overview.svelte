@@ -61,13 +61,17 @@
   let history = $state<HistoryPoint[] | null>(null);
   let historyLoading = $state(false);
   let historyRange = $state(0);
+  let historyError = $state("");
+  let historyAttempt = $state(0);
 
   $effect(() => {
     const minutes = rangeMinutes;
     if (minutes <= 60) return;
+    void historyAttempt;
     const hours = minutes / 60;
     historyRange = 0;
     historyLoading = true;
+    historyError = "";
     let active = true;
     AppService.History(hours)
       .then((points) => {
@@ -75,9 +79,10 @@
         history = points ?? [];
         historyRange = minutes;
       })
-      .catch(() => {
+      .catch((error) => {
         if (!active) return;
         history = [];
+        historyError = `读取历史失败：${error instanceof Error ? error.message : String(error)}`;
       })
       .finally(() => {
         if (active) historyLoading = false;
@@ -89,7 +94,7 @@
     if (historyRange === rangeMinutes && history) {
       return history.map((point): RequestSeriesPoint => ({ time: point.time, bytesDown: point.bytesDown, latencyMs: point.latencyMs }));
     }
-    return (snapshot.series ?? []).slice(-30);
+    return [];
   });
   const routeTitle = $derived(
     lane.running ? "Codex Lane 正在运行" : lane.error ? "Codex Lane 启动异常" : "Codex Lane 已停止",
@@ -260,7 +265,10 @@
           {/each}
         </div>
       </div>
-      <ThroughputChart series={visibleSeries} />
+      {#if rangeMinutes > 60 && historyError}
+        <div class="history-error" role="alert"><span>{historyError}</span><button class="btn small" onclick={() => historyAttempt++}>重试历史</button></div>
+      {/if}
+      <ThroughputChart series={visibleSeries} emptyMessage={rangeMinutes > 60 && historyLoading ? "正在加载历史记录…" : rangeMinutes > 60 && historyError ? "历史读取失败，请重试" : "还没有可绘制的请求流量"} />
       <div class="chart-footer">
         <span>{rangeMinutes > 60 ? (historyLoading ? "历史加载中…" : `最近 ${rangeMinutes / 60} 小时`) : `最近 ${rangeMinutes} 分钟`}</span><span>·</span><span>{rangeMinutes > 60 ? "按小时聚合" : "按分钟聚合"}</span><span>·</span><span>仅域名、状态、耗时与流量</span>
         <span class="spacer"></span><b>无 MITM</b><span>·</span><span>不读取 HTTPS 内容</span>

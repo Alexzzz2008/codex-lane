@@ -76,6 +76,41 @@ func TestStatsUseConnectLatencyForLongTunnels(t *testing.T) {
 	}
 }
 
+func TestZeroMillisecondConnectLatencyDoesNotBecomeTunnelDuration(t *testing.T) {
+	store := NewStore(100, "", nil)
+	record := model.RequestRecord{ID: "fast-local-proxy", Method: "CONNECT", Status: 200, Result: "ok", DurationMs: 60000}
+	store.Add(record)
+	store.Touch(record)
+	store.Finish(record)
+	if stats := store.Stats(); stats.MedianMs != 0 || stats.P95Ms != 0 {
+		t.Fatalf("connection lifetime was reported as latency: %+v", stats)
+	}
+	for _, point := range store.Series() {
+		if point.LatencyMs != 0 {
+			t.Fatalf("chart contains tunnel duration: %+v", point)
+		}
+	}
+}
+
+func TestZeroLatencySamplesParticipateInMedianAndAverage(t *testing.T) {
+	store := NewStore(100, "", nil)
+	store.Add(model.RequestRecord{ID: "still-connecting", Method: "CONNECT"})
+	for index, latency := range []int64{0, 0, 90} {
+		record := model.RequestRecord{ID: fmt.Sprint(index), Method: "CONNECT"}
+		store.Add(record)
+		record.Status, record.Result, record.LatencyMs = 200, "ok", latency
+		store.Touch(record)
+		store.Finish(record)
+	}
+	if stats := store.Stats(); stats.MedianMs != 0 {
+		t.Fatalf("zero latency samples were discarded: %+v", stats)
+	}
+	points := store.Series()
+	if points[len(points)-1].LatencyMs != 30 {
+		t.Fatalf("expected average of 0, 0, 90 to be 30: %+v", points[len(points)-1])
+	}
+}
+
 func TestSeriesKeepsRollingHourAfterLongRuntime(t *testing.T) {
 	store := NewStore(1000, t.TempDir(), nil)
 	t.Cleanup(store.Close)

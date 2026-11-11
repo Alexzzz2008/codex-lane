@@ -2,7 +2,7 @@
   import type { RequestSeriesPoint } from "../../bindings/github.com/Alexzzz2008/codex-lane/internal/model";
   import { formatBytes } from "./format";
 
-  let { series = [] }: { series?: RequestSeriesPoint[] | null } = $props();
+  let { series = [], emptyMessage = "还没有可绘制的请求流量" }: { series?: RequestSeriesPoint[] | null; emptyMessage?: string } = $props();
 
   const width = 760;
   const left = 48;
@@ -149,7 +149,7 @@
         <span><i class="green"></i>延迟<strong>{hovered.latencyMs ? `${Math.round(hovered.latencyMs)} ms` : "—"}</strong></span>
       </div>
     {:else if !hasTraffic}
-      <div class="chart-empty">还没有可绘制的请求流量</div>
+      <div class="chart-empty">{emptyMessage}</div>
     {/if}
   </div>
 </div>

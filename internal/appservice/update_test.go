@@ -173,6 +173,40 @@ func TestOfflineUpdateCheckPreservesDownloadedVersion(t *testing.T) {
 	}
 }
 
+func TestInvalidManifestPreservesVerifiedUpdate(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		manifest selfupdate.Manifest
+	}{
+		{"version", selfupdate.Manifest{Version: "invalid"}},
+		{"missing asset", selfupdate.Manifest{Version: "99.0.1"}},
+		{"invalid size", selfupdate.Manifest{Version: "99.0.1", Assets: map[string]selfupdate.Asset{updateAssetKey: {URL: "https://example.com/update.exe", SHA256: string(make([]byte, 64))}}}},
+		{"invalid hash", selfupdate.Manifest{Version: "99.0.1", Assets: map[string]selfupdate.Asset{updateAssetKey: {URL: "https://example.com/update.exe", Size: 10, SHA256: "invalid"}}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _ = json.NewEncoder(w).Encode(test.manifest) }))
+			defer server.Close()
+			t.Setenv("CODEXLANE_UPDATE_FEED", server.URL)
+			service := New()
+			service.cfg = config.Default()
+			service.cfg.Upstream.Host = ""
+			service.stagedVersion = "99.0.0"
+			service.stagedUpdate = filepath.Join(t.TempDir(), "update.exe")
+			body := []byte("verified update")
+			sum := sha256.Sum256(body)
+			if err := os.WriteFile(service.stagedUpdate, body, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			service.updateManifest = selfupdate.Manifest{Version: "99.0.0", Assets: map[string]selfupdate.Asset{updateAssetKey: {URL: server.URL, Size: int64(len(body)), SHA256: hex.EncodeToString(sum[:])}}}
+			service.updateStatus = model.UpdateStatus{Status: "ready", Available: true, LatestVersion: "99.0.0"}
+			status := service.CheckForUpdates()
+			if status.Status != "ready" || !status.Available || status.LatestVersion != "99.0.0" || status.Error == "" || !service.updateReadyFor("99.0.0") {
+				t.Fatalf("verified update was invalidated: %+v", status)
+			}
+		})
+	}
+}
+
 func TestUpdateVersionsAreSafeAndOrdered(t *testing.T) {
 	for _, value := range []string{"1.2.3-../../escape", "-1.2.3", "1.2.3/escape", "1.2.3-beta..1", "1.2"} {
 		if isVersion(value) {
