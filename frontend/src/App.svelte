@@ -234,6 +234,7 @@
       await load(false);
     } catch (error) {
       notify("error", "测试运行失败", errorText(error));
+      await load(false);
     } finally {
       busy = "";
     }

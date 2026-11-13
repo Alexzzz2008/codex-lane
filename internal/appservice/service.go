@@ -24,7 +24,7 @@ import (
 	"github.com/Alexzzz2008/codex-lane/internal/selfupdate"
 )
 
-const Version = "0.1.45"
+const Version = "0.1.46"
 
 type Emitter func(name string, data ...any)
 
@@ -47,6 +47,7 @@ type AppService struct {
 	events                []model.Event
 	initError             string
 	testReport            *model.TestReport
+	testCancel            context.CancelFunc
 	diagnostic            *model.DiagnosticReport
 	lastDeep              time.Time
 	cachedPackage         codex.PackageInfo
@@ -276,10 +277,12 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	s.cfg = cfg
 	s.initError = ""
 	engineChanged := previousEngine != cfg.Engine || previousDistro != cfg.WSLDistro
+	if engineChanged || previousConfig.Upstream != cfg.Upstream {
+		s.invalidateChecksLocked()
+	}
 	if engineChanged {
 		s.cachedEngine = engine
 		s.cachedWSL = model.WSLStatus{Distro: cfg.WSLDistro}
-		s.testReport = nil
 	}
 	s.mu.Unlock()
 	if store != nil {
@@ -292,7 +295,6 @@ func (s *AppService) SaveSettings(input model.SettingsInput) (model.Snapshot, er
 	if oldUpstream != newUpstream {
 		s.mu.Lock()
 		s.cachedUpstream = model.UpstreamStatus{URL: newUpstream}
-		s.testReport = nil
 		s.mu.Unlock()
 	}
 	laneRulesChanged := !sameRoutes(previousRoutes, cfg.Lane.Routes) ||
@@ -376,6 +378,7 @@ func (s *AppService) startLane(cfg model.Config) error {
 	s.lane = lane
 	s.laneCtx = ctx
 	s.laneCancel = cancel
+	s.invalidateChecksLocked()
 	s.mu.Unlock()
 	s.persistLanePorts(lane)
 	return nil
@@ -410,6 +413,7 @@ func (s *AppService) StopLane() {
 	s.lane = nil
 	s.laneCtx = nil
 	s.laneCancel = nil
+	s.invalidateChecksLocked()
 	s.mu.Unlock()
 	if cancel != nil {
 		cancel()
@@ -426,6 +430,17 @@ func (s *AppService) applyLaneRouting(cfg model.Config) {
 	if lane := s.currentLane(); lane != nil {
 		lane.UpdateRouting(cfg.Upstream, cfg.Lane.Routes, cfg.Lane.AllowedHosts, cfg.Lane.HostFilterMode)
 		go func() { _ = s.checkUpstreamHealth(s.ctx, cfg) }()
+	}
+	s.mu.Lock()
+	s.invalidateChecksLocked()
+	s.mu.Unlock()
+}
+
+// invalidateChecksLocked prevents an in-flight check from restoring an outdated report.
+func (s *AppService) invalidateChecksLocked() {
+	s.testReport = nil
+	if s.testCancel != nil {
+		s.testCancel()
 	}
 }
 
@@ -585,12 +600,26 @@ func (s *AppService) RunTests() (model.TestReport, error) {
 		return model.TestReport{}, errors.New("检查正在进行中，请稍候")
 	}
 	defer s.testRunning.Store(false)
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	s.mu.Lock()
+	parent := s.ctx
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, 90*time.Second)
+	s.testCancel = cancel
+	s.mu.Unlock()
 	defer cancel()
 	report := s.runTests(ctx)
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.testCancel = nil
+	if errors.Is(ctx.Err(), context.Canceled) {
+		return model.TestReport{}, errors.New("代理配置或通道已变化，请重新运行检查")
+	}
+	if ctx.Err() != nil {
+		return model.TestReport{}, errors.New("检查超时，请检查网络后重试")
+	}
 	s.testReport = &report
-	s.mu.Unlock()
 	return report, nil
 }
 

@@ -468,12 +468,21 @@ func (s *Server) handleHTTP(source string, w http.ResponseWriter, r *http.Reques
 			}
 		}
 	}
+	completed := false
+	defer func() {
+		// ReverseProxy aborts a truncated body with ErrAbortHandler; still finish its log.
+		if !completed {
+			record.Result = "failed"
+			record.Error = "响应传输中断"
+		}
+		record.BytesUp = bytesUp.Load()
+		record.BytesDown = bytesDown.Load()
+		record.DurationMs = time.Since(started).Milliseconds()
+		record.FinishedAt = time.Now().Format(time.RFC3339Nano)
+		s.emitFinished(record)
+	}()
 	proxy.ServeHTTP(w, r)
-	record.BytesUp = bytesUp.Load()
-	record.BytesDown = bytesDown.Load()
-	record.DurationMs = time.Since(started).Milliseconds()
-	record.FinishedAt = time.Now().Format(time.RFC3339Nano)
-	s.emitFinished(record)
+	completed = true
 }
 
 func (s *Server) emit(event string, record model.RequestRecord) {
@@ -700,6 +709,7 @@ func HTTPBodyThroughProxy(ctx context.Context, proxyURL string, target string) (
 		},
 		Timeout: 25 * time.Second,
 	}
+	defer client.CloseIdleConnections()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return 0, nil, 0, err

@@ -179,6 +179,66 @@ func TestFailedProfileSaveKeepsCurrentProxy(t *testing.T) {
 	}
 }
 
+func TestRoutingChangesInvalidatePreviousChecks(t *testing.T) {
+	for _, change := range []string{"routes", "allowlist", "no proxy", "stop", "start"} {
+		t.Run(change, func(t *testing.T) {
+			service := newProxyTestService(t)
+			if change != "start" {
+				if err := service.StartLane(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			service.testReport = &model.TestReport{Healthy: true, Score: 100}
+			checkCtx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			service.testCancel = cancel
+			switch change {
+			case "start":
+				if err := service.StartLane(); err != nil {
+					t.Fatal(err)
+				}
+			case "stop":
+				service.StopLane()
+			default:
+				input := model.SettingsInput(config.Settings(service.currentConfig()))
+				input.LaunchAtLogin = platform.IsAutoStart()
+				switch change {
+				case "routes":
+					input.Routes = []model.RouteRule{{Pattern: "*.openai.com", Action: model.RouteDirect}}
+				case "allowlist":
+					input.HostFilterMode = model.HostFilterAllowlist
+					input.AllowedHosts = []string{"example.test"}
+				case "no proxy":
+					input.NoProxy += ",example.test"
+				}
+				if _, err := service.SaveSettings(input); err != nil {
+					t.Fatal(err)
+				}
+			}
+			state, err := service.GetState()
+			if checkCtx.Err() == nil {
+				t.Fatal("configuration change did not cancel the in-flight check")
+			}
+			if err != nil || state.TestReport != nil {
+				t.Fatalf("%s kept a stale check report: %+v, %v", change, state.TestReport, err)
+			}
+		})
+	}
+}
+
+func TestCanceledChecksDoNotPublishAReport(t *testing.T) {
+	service := newProxyTestService(t)
+	ctx, cancel := context.WithCancel(service.ctx)
+	cancel()
+	service.ctx = ctx
+	if _, err := service.RunTests(); err == nil {
+		t.Fatal("canceled check reported success")
+	}
+	if state, err := service.GetState(); err != nil || state.TestReport != nil {
+		t.Fatalf("canceled check published a report: %+v, %v", state.TestReport, err)
+	}
+}
+
 func TestSavingManualEngineWritesAnAbsentSetting(t *testing.T) {
 	service := newProxyTestService(t)
 	service.cfg.Engine = model.EngineWSL

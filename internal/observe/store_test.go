@@ -53,6 +53,19 @@ func TestActiveConnectionStatsAndTrafficAreImmediateAndNotCountedTwice(t *testin
 	}
 }
 
+func TestFailedTransferOverridesSuccessfulResponseStatus(t *testing.T) {
+	store := NewStore(100, "", nil)
+	record := model.RequestRecord{ID: "truncated", Method: "GET"}
+	store.Add(record)
+	record.Status, record.Result = 200, "ok"
+	store.Touch(record)
+	record.Result, record.Error = "failed", "response interrupted"
+	store.Finish(record)
+	if stats := store.Stats(); stats.Total != 1 || stats.Success != 0 || stats.Failed != 1 {
+		t.Fatalf("interrupted transfer was counted as successful: %+v", stats)
+	}
+}
+
 func TestStatsUseConnectLatencyForLongTunnels(t *testing.T) {
 	store := NewStore(1000, t.TempDir(), nil)
 	t.Cleanup(store.Close)

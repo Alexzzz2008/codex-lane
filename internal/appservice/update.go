@@ -243,13 +243,13 @@ func (s *AppService) checkForUpdates(manual bool) {
 		s.clearStaleUpdate(manifest.Version)
 		return
 	}
+	s.mu.Lock()
+	s.updateManifest = manifest
+	s.mu.Unlock()
 	if status.Status == "available" && s.updateReadyFor(manifest.Version) {
 		status.Status = "ready"
 		status.Downloaded = asset.Size
 	}
-	s.mu.Lock()
-	s.updateManifest = manifest
-	s.mu.Unlock()
 	s.setUpdateStatus(status)
 	if manual && status.Status == "available" {
 		s.addEvent("info", "发现新版本", "v"+manifest.Version+" 正在后台下载")

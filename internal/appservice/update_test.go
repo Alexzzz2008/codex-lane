@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -170,6 +171,54 @@ func TestOfflineUpdateCheckPreservesDownloadedVersion(t *testing.T) {
 	status := service.CheckForUpdates()
 	if status.Status != "ready" || !status.Available || status.LatestVersion != "99.0.0" || status.Error == "" {
 		t.Fatalf("downloaded update was lost: %+v", status)
+	}
+}
+
+func TestSameVersionUpdateReplacementIsDownloadedAgain(t *testing.T) {
+	var mu sync.RWMutex
+	body := []byte("original update")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.RLock()
+		payload := append([]byte(nil), body...)
+		mu.RUnlock()
+		if r.URL.Path == "/update.exe" {
+			_, _ = w.Write(payload)
+			return
+		}
+		sum := sha256.Sum256(payload)
+		_ = json.NewEncoder(w).Encode(selfupdate.Manifest{Version: "99.0.0", Assets: map[string]selfupdate.Asset{
+			updateAssetKey: {URL: "http://" + r.Host + "/update.exe", Size: int64(len(payload)), SHA256: hex.EncodeToString(sum[:])},
+		}})
+	}))
+	defer server.Close()
+	t.Setenv("CODEXLANE_UPDATE_FEED", server.URL+"/latest.json")
+	service := New()
+	service.paths.LocalAppData = t.TempDir()
+	service.cfg = config.Default()
+	service.cfg.Upstream.Host = ""
+	waitDownload := func() {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for service.updateDownloadRunning.Load() && time.Now().Before(deadline) {
+			time.Sleep(10 * time.Millisecond)
+		}
+		if service.updateDownloadRunning.Load() || service.currentUpdateStatus().Status != "ready" {
+			t.Fatalf("update not ready: %+v", service.currentUpdateStatus())
+		}
+	}
+	service.CheckForUpdates()
+	waitDownload()
+	mu.Lock()
+	body = []byte("replacement update")
+	mu.Unlock()
+	service.CheckForUpdates()
+	waitDownload()
+	if !service.updateReadyFor("99.0.0") {
+		t.Fatal("same-version replacement was marked ready using the previous asset checksum")
+	}
+	data, err := os.ReadFile(service.stagedUpdate)
+	if err != nil || string(data) != "replacement update" {
+		t.Fatalf("staged update = %q, err = %v", data, err)
 	}
 }
 

@@ -132,6 +132,45 @@ func TestPlainRequestGoesThroughUpstream(t *testing.T) {
 	}
 }
 
+func TestTruncatedHTTPResponseFinishesAsFailed(t *testing.T) {
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "10000")
+		w.WriteHeader(http.StatusOK)
+		w.(http.Flusher).Flush()
+		_, _ = io.WriteString(w, "incomplete")
+	}))
+	defer target.Close()
+	finished := make(chan model.RequestRecord, 2)
+	server := startTestLane(t, Options{
+		Routes: []model.RouteRule{{Pattern: "127.0.0.1", Action: model.RouteDirect}},
+		OnRecord: func(event string, record model.RequestRecord) {
+			if event == "request:finished" {
+				finished <- record
+			}
+		},
+	})
+	proxyURL, _ := url.Parse(server.InterfaceURL())
+	transport := &http.Transport{Proxy: http.ProxyURL(proxyURL)}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: time.Second}
+	response, err := client.Get(target.URL)
+	if err == nil {
+		_, err = io.ReadAll(response.Body)
+		response.Body.Close()
+	}
+	if err == nil {
+		t.Fatal("truncated response was not reported to the client")
+	}
+	select {
+	case record := <-finished:
+		if record.Result != "failed" || record.FinishedAt == "" || record.Error == "" || record.Status != http.StatusOK {
+			t.Fatalf("incorrect truncated response record: %+v", record)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("truncated response left its request record unfinished")
+	}
+}
+
 func TestDirectRouteBypassesUpstream(t *testing.T) {
 	upstream := startFakeUpstream(t)
 	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

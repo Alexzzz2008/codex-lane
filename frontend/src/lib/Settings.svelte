@@ -66,12 +66,12 @@
       stopCodexOnExit: value.settings.stopCodexOnExit,
       retentionDays: value.settings.retentionDays,
       maxMemoryRows: value.settings.maxMemoryRows,
-      upstreams: value.settings.upstreams ?? [],
+      upstreams: (value.settings.upstreams ?? []).map((profile) => ({ ...profile })),
       activeUpstream: value.settings.activeUpstream,
       autoFailover: value.settings.autoFailover,
       hostFilterMode: value.settings.hostFilterMode,
-      allowedHosts: value.settings.allowedHosts ?? [],
-      routes: value.settings.routes ?? [],
+      allowedHosts: [...(value.settings.allowedHosts ?? [])],
+      routes: (value.settings.routes ?? []).map((route) => ({ ...route })),
       minimizeToTray: value.settings.minimizeToTray,
       launchAtLogin: value.settings.launchAtLogin,
     };
@@ -327,6 +327,9 @@
         const saved = fromSnapshot(snapshot);
         const preserved = keys.filter((key) => JSON.stringify(current[key]) !== JSON.stringify(payload[key]) ||
           (!fields.includes(key) && JSON.stringify(payload[key]) !== JSON.stringify(original[key])));
+        if (preserved.some((key) => proxyFields.includes(key))) {
+          for (const key of proxyFields) if (!preserved.includes(key)) preserved.push(key);
+        }
         draft = { ...saved, ...Object.fromEntries(preserved.map((key) => [key, current[key]])) } as SettingsInput;
         baseline = JSON.stringify(saved);
         lastIncoming = baseline;

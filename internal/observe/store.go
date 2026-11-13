@@ -169,10 +169,10 @@ func (s *Store) account(record model.RequestRecord) {
 	b := s.bucketAt(time.Now().Truncate(time.Minute))
 	b.down += down
 	result := 0
-	if record.Result == "ok" || (record.Status >= 200 && record.Status < 400) {
-		result = 1
-	} else if record.Result == "failed" || record.Result == "blocked" || record.Status >= 400 {
+	if record.Result == "failed" || record.Result == "blocked" || record.Status >= 400 {
 		result = -1
+	} else if record.Result == "ok" || (record.Status >= 200 && record.Status < 400) {
+		result = 1
 	}
 	if result != previous.result {
 		if previous.result == 1 {

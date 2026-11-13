@@ -410,6 +410,7 @@ func directHTTPStatus(ctx context.Context, target string) (int, time.Duration, e
 		},
 		Timeout: 8 * time.Second,
 	}
+	defer client.CloseIdleConnections()
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return 0, 0, err

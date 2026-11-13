@@ -133,7 +133,11 @@ func (s *AppService) checkCodexDrift(driftCount *int, alerted bool) bool {
 func (s *AppService) failoverUpstream() bool {
 	s.mu.RLock()
 	cfg := s.cfg
+	lane := s.lane
 	s.mu.RUnlock()
+	if !cfg.AutoFailover || lane == nil {
+		return false
+	}
 	for _, profile := range cfg.Upstreams {
 		if profile.Name == cfg.ActiveUpstream || profile.Protocol == "" {
 			continue
@@ -145,7 +149,18 @@ func (s *AppService) failoverUpstream() bool {
 		if err != nil {
 			continue
 		}
-		if err := s.switchToProfile(profile); err != nil {
+		s.operationMu.Lock()
+		s.mu.RLock()
+		unchanged := s.cfg.AutoFailover && s.lane == lane &&
+			s.cfg.ActiveUpstream == cfg.ActiveUpstream && s.cfg.Upstream == cfg.Upstream
+		s.mu.RUnlock()
+		if !unchanged {
+			s.operationMu.Unlock()
+			return false
+		}
+		err = s.switchToProfileLocked(profile)
+		s.operationMu.Unlock()
+		if err != nil {
 			continue
 		}
 		s.addEvent("ok", "已自动切换上游代理", config.UpstreamURL(candidate))
@@ -157,6 +172,11 @@ func (s *AppService) failoverUpstream() bool {
 func (s *AppService) switchToProfile(profile model.UpstreamProfile) error {
 	s.operationMu.Lock()
 	defer s.operationMu.Unlock()
+	return s.switchToProfileLocked(profile)
+}
+
+// switchToProfileLocked requires operationMu so an old health probe cannot undo a user change.
+func (s *AppService) switchToProfileLocked(profile model.UpstreamProfile) error {
 	s.mu.Lock()
 	if s.paths.ConfigPath == "" {
 		s.mu.Unlock()
@@ -185,7 +205,7 @@ func (s *AppService) switchToProfile(profile model.UpstreamProfile) error {
 	s.mu.Lock()
 	s.cfg = cfg
 	s.cachedUpstream = model.UpstreamStatus{URL: config.UpstreamURL(cfg.Upstream)}
-	s.testReport = nil
+	s.invalidateChecksLocked()
 	s.mu.Unlock()
 	s.applyLaneRouting(cfg)
 	return nil
